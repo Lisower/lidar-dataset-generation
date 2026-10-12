@@ -1,0 +1,9 @@
+﻿[package]
+name = "plants-generator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy-utils = { path = "../bevy-utils" }
+bevy.workspace = true
+rand.workspace = true

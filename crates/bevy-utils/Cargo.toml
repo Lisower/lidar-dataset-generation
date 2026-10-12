@@ -1,0 +1,11 @@
+[package]
+name = "bevy-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "UX-слой приложений проекта: камеры, интерфейс, небо, звук"
+
+[dependencies]
+bevy.workspace = true
+generation-core = { path = "../generation-core" }

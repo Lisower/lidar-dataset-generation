@@ -1,0 +1,14 @@
+[package]
+name = "generation-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Общие данные, облака точек и визуальные модели для генераторов"
+
+[dependencies]
+bevy.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+ron.workspace = true

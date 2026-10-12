@@ -1,0 +1,5 @@
+[toolchain]
+channel = "stable"
+profile = "default"
+components = ["rust-src"]
+# В итоге будут rustc, rust-std, cargo, rust-docs, rustfmt, clippy и rust-src

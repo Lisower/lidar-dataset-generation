@@ -1,0 +1,22 @@
+[package]
+name = "buildings-generator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Генератор построек"
+
+[lib]
+name = "buildings_generator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "buildings-generator"
+path = "src/main.rs"
+
+[dependencies]
+generation-core = { path = "../generation-core" }
+bevy-utils = { path = "../bevy-utils" }
+bevy.workspace = true
+serde.workspace = true
+rand.workspace = true

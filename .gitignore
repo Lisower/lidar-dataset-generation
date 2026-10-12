@@ -1,0 +1,41 @@
+# --- Сборка ---
+/target
+**/*.rs.bk
+*.pdb
+
+# --- Редакторы ---
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*~
+
+# --- Данные генерации ---
+/crates/*/assets/export/
+/assets/export/
+*.xyz
+*.las
+*.laz
+*.ply
+*.pcd
+
+# --- Локальные настройки Obsidian ---
+wiki/.obsidian/workspace.json
+wiki/.obsidian/workspace-mobile.json
+wiki/.obsidian/workspace*.json
+wiki/.obsidian/cache/
+wiki/.obsidian/graph.json
+wiki/.obsidian/plugins/*/data.json
+wiki/.trash/
+
+# Локальные заметки, которые не нужны в общей вики
+wiki/local/
+
+# Локальные файлы, которые не нужно публиковать (для общения и обсуждения с AI-агентами, например, или legacy для прототипа этого проекта)
+local/
+
+# --- ОС ---
+Thumbs.db
+desktop.ini
+.DS_Store

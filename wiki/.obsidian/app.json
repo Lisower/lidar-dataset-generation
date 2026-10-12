@@ -1,0 +1,10 @@
+{
+  "newFileLocation": "root",
+  "attachmentFolderPath": "attachments",
+  "alwaysUpdateLinks": true,
+  "useMarkdownLinks": false,
+  "showLineNumber": false,
+  "readableLineLength": true,
+  "strictLineBreaks": false,
+  "promptDelete": false
+}

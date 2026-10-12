@@ -1,0 +1,32 @@
+# Единые переводы строк для всей команды.
+#
+# Без этого файла Git на Windows подставляет CRLF, а rustfmt и CI ожидают LF —
+# отсюда постоянные предупреждения и «шумные» диффы в один символ.
+# Мы фиксируем LF для текста и явно помечаем бинарные файлы.
+
+# По умолчанию — автоопределение, но для исходников и текста строго LF.
+* text=auto
+
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.md        text eol=lf
+*.ron       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sh        text eol=lf
+
+# На Windows-скриптах CRLF ожидаем.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Бинарные файлы: не трогать.
+*.png       binary
+*.jpg       binary
+*.ico       binary
+*.ttf       binary
+*.otf       binary
+*.las       binary
+*.laz       binary
+*.xyz       binary
