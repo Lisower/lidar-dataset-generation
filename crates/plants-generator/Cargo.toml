@@ -1,9 +1,21 @@
 ﻿[package]
 name = "plants-generator"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Генератор растений: деревьев, кустов, травы"
+
+[lib]
+name = "plants_generator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plants-generator"
+path = "src/main.rs"
 
 [dependencies]
+generation-core = { path = "../generation-core" }
 bevy-utils = { path = "../bevy-utils" }
 bevy.workspace = true
 rand.workspace = true
