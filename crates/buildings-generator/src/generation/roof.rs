@@ -179,13 +179,8 @@ fn gable_polys(
     .collect::<Vec<_>>()
 }
 
-/// Полувальмовая (голландская) крыша: вальма, усечённая небольшим
-/// фронтоном в верхней части торцов.
-///
-/// Гребень проходит ВСЮ длину (как у двускатной) и при желании сдвинут от
-/// центра (`ridge`); к гребню от фронтонов идут полноценные скаты — «куска
-/// от фронтона до гребня» не остаётся. Вальма (боковые торцевые трапеции)
-/// закрывает торцы ниже фронтонов.
+/// Dutch half-hip roof: inset upper gables above sloping end hips.
+/// The ridge and gable bases share the same inset at each end.
 fn half_hip_polys(
     length: f32,
     width: f32,
@@ -199,6 +194,7 @@ fn half_hip_polys(
     // Высота, до которой «срезана» вальма (ниже — вальма, выше — фронтон).
     let t_f = 0.55;
     let z_g = rise * t_f;
+    let gx = half_hip_fronton_x(lx, wy);
     // Точки среза вальмы на высоте z_g: с каждой стороны от гребня своя
     // «половина» основания фронтона (чтобы всё лежало на плоскости ската).
     let gy_lo = (ridge + wy) * (1.0 - t_f);
@@ -210,14 +206,14 @@ fn half_hip_polys(
         Vec3::new(lx, wy, 0.0),
         Vec3::new(-lx, wy, 0.0),
     );
-    // Гребень: прямая линия на высоте rise от торца до торца.
-    let apex_p = Vec3::new(lx, ridge, rise);
-    let apex_m = Vec3::new(-lx, ridge, rise);
+    // The ridge connects the inset gables.
+    let apex_p = Vec3::new(gx, ridge, rise);
+    let apex_m = Vec3::new(-gx, ridge, rise);
     // Углы оснований фронтонов (на уровне среза вальмы z_g).
-    let c_lo = Vec3::new(lx, ridge - gy_lo, z_g); // низ фронтона, передняя (-Y) сторона
-    let c_hi = Vec3::new(lx, ridge + gy_hi, z_g); // низ фронтона, задняя (+Y) сторона
-    let c_lo_m = Vec3::new(-lx, ridge - gy_lo, z_g);
-    let c_hi_m = Vec3::new(-lx, ridge + gy_hi, z_g);
+    let c_lo = Vec3::new(gx, ridge - gy_lo, z_g); // низ фронтона, передняя (-Y) сторона
+    let c_hi = Vec3::new(gx, ridge + gy_hi, z_g); // низ фронтона, задняя (+Y) сторона
+    let c_lo_m = Vec3::new(-gx, ridge - gy_lo, z_g);
+    let c_hi_m = Vec3::new(-gx, ridge + gy_hi, z_g);
 
     vec![
         // Передний скат (к −Y), нижняя часть (от карниза до вальмы).
@@ -580,6 +576,11 @@ fn fronton_window_part(
     let w = w_max.min(config.window_width).max(0.5);
 
     let lx = length * 0.5 + overhang;
+    let lx = if style == RoofStyle::HalfHip {
+        half_hip_fronton_x(lx, wy)
+    } else {
+        lx
+    };
     // Окно — небольшой бортик-окошко во фронтоне (+X), центр — на высоте
     // середины фронтона; выступ наружу 0.03 м.
     Part::boxed_step(
@@ -797,4 +798,9 @@ pub fn roof_part(
 #[allow(dead_code)]
 fn identity() -> Quat {
     Quat::IDENTITY
+}
+
+// Inset the gables to form sloping end hips; retain room for roof details.
+fn half_hip_fronton_x(lx: f32, wy: f32) -> f32 {
+    lx - (wy * 0.55).min(lx * 0.4)
 }

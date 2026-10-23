@@ -164,3 +164,32 @@ fn roof_geometry_valid() {
         }
     }
 }
+
+#[test]
+fn half_hip_has_sloping_ends_and_planar_sides() {
+    use crate::generation::roof::roof_faces;
+    for (length, width) in [(12.0, 8.0), (8.0, 12.0), (5.0, 5.0)] {
+        for pitch in [5.0, 27.0, 40.0] {
+            let wy = width * 0.5 + 0.4;
+            for ridge in [-0.2 * wy, 0.0, 0.2 * wy] {
+                let faces = roof_faces(
+                    RoofStyle::HalfHip, length, width, 0.4, pitch, &config(3), ridge,
+                );
+                for (face, sign) in [(&faces[4], 1.0), (&faces[5], -1.0)] {
+                    let n = face.normal();
+                    assert!(n.x * sign > 0.01 && n.z > 0.01);
+                }
+                for face in &faces[..8] {
+                    let points = face.points();
+                    let n = face.normal();
+                    assert!(n.length() > 0.001);
+                    for p in points.iter().skip(1) {
+                        assert!((*p - points[0]).dot(n).abs() < 0.001);
+                    }
+                }
+                assert!(faces[0].normal().dot(faces[1].normal()) > 0.999);
+                assert!(faces[2].normal().dot(faces[3].normal()) > 0.999);
+            }
+        }
+    }
+}
