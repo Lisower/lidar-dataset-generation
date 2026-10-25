@@ -21,65 +21,11 @@
 Поле высот хранит одну высоту на координату: нависающие скалы невозможны,
 а резкое падение занимает одну ячейку. Подводный грунт отсутствует в облаке точек.
 
-## Запуск на Ubuntu / Debian
+## Документация
 
-Нужен **Rust 1.97.1 или новее** (требование Bevy 0.20), графическая сессия и
-драйвер видеокарты с поддержкой Vulkan. Первая сборка Bevy занимает много времени и места.
+[Установка, запуск и управление на Linux](wiki/Запуск.md).
 
-1. Установите инструменты и [зависимости Bevy для Linux](https://github.com/bevyengine/bevy/blob/main/docs/linux_dependencies.md):
-
-   ```bash
-   sudo apt update
-   sudo apt install build-essential pkg-config curl libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0 libwayland-dev libxkbcommon-dev
-   ```
-
-   Для Intel/AMD при отсутствии Vulkan-драйвера: `sudo apt install mesa-vulkan-drivers`.
-   Для NVIDIA используйте подходящий драйвер NVIDIA вашей системы.
-
-2. Установите Rust, если команда `cargo` отсутствует:
-
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
-   sh /tmp/rustup-init.sh -y
-   source "$HOME/.cargo/env"
-   ```
-
-   Для существующей установки: `rustup update stable`.
-   Проверьте `rustc --version`: версия должна быть не ниже 1.97.1.
-
-3. Запустите ландшафты из их каталога, чтобы Bevy нашёл шрифт в `assets/`:
-
-   ```bash
-   cd ~/Projects/lidar-dataset-generation
-   git switch feat/natural-landscapes
-   cd crates/landscapes-generator
-   cargo run --locked -p landscapes-generator
-   ```
-
-   Последующие запуски используют собранные зависимости. Для более быстрой генерации
-   можно собрать с `--release`; первая такая сборка займёт дольше.
-   При нехватке памяти добавьте `CARGO_BUILD_JOBS=2` перед `cargo run`.
-
-## Управление
-
-| Клавиша / мышь | Действие |
-| --- | --- |
-| `P` | Следующий пресет |
-| `R` / `Shift+R` | Новый seed / повторить текущий |
-| `V` | 3D-модель / облако точек |
-| `Tab` | Орбитальная / свободная камера |
-| ЛКМ + движение, колесо | Вращение, приближение в орбитальной камере |
-| ПКМ + движение, `WASD`, `Q/E`, `Shift` | Обзор, полёт, вниз/вверх, ускорение |
-
-## Проверка
-
-Из корня репозитория:
-
-```bash
-cargo test --locked -p landscapes-generator
-```
+## Структура
 
 Генерация находится в `crates/landscapes-generator/src/generation/`,
 построение мешей — в `src/visual/`, окно и управление пресетами — в `src/plugin.rs`.
-Другие генераторы запускаются аналогично из своих каталогов:
-`cargo run -p buildings-generator` и `cargo run -p plants-generator`.
