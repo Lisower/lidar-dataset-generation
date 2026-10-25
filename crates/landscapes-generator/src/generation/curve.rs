@@ -283,12 +283,14 @@ pub fn winding_path(
     // (кривая плавно входит/выходит через границы карты).
     let mut ctrl = Vec::with_capacity(bends + 2);
     ctrl.push(from);
+    let mut side = if rng.random::<bool>() { 1.0 } else { -1.0 };
     for k in 1..=bends {
         let frac = k as f32 / (bends + 1) as f32;
         let base = from + dir * frac;
         let envelope = (frac * std::f32::consts::PI).sin();
-        let off = rng.random_range(-1.0..1.0) * amplitude * envelope;
+        let off = side * rng.random_range(0.55..1.0) * amplitude * envelope;
         ctrl.push(base + perp * off);
+        side = -side;
     }
     ctrl.push(to);
 
