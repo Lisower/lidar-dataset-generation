@@ -414,32 +414,29 @@ fn river(seed: Seed) -> LandscapeConfig {
 /// до самой кромки (подводная отмель, без сухих «колец»-ступенек).
 fn pond(seed: Seed) -> LandscapeConfig {
     let mut rng = rng_for(LandscapePreset::Pond, seed);
-    let center = Vec2::new(range(&mut rng, -16.0, 16.0), range(&mut rng, -16.0, 16.0));
-    let rx = range(&mut rng, 12.0, 18.0);
-    let ry = range(&mut rng, 15.0, 24.0);
+    let center = Vec2::new(range(&mut rng, -6.0, 6.0), range(&mut rng, -6.0, 6.0));
+    let rx = range(&mut rng, 23.0, 29.0);
+    let ry = range(&mut rng, 27.0, 34.0);
     let contour_pts = warped_contour(
         center,
         rx,
         ry,
-        0.14,
-        96,
+        range(&mut rng, 0.32, 0.48),
+        128,
         seed.with_label("пруд-контур"),
     );
     let contour = Curve::new_closed(contour_pts);
-    // Окружающая суша заметно выше уровня воды — у самой кромки всегда есть
-    // заметный вертикальный обрыв (запас больше амплитуды шума, поэтому шум
-    // не «съедает» стенку даже в минимумах).
+    // Внешняя береговая полоса плавно соединяет урез с окружающей сушей.
     let base_h = range(&mut rng, 6.0, 7.2);
     let water = range(&mut rng, 3.2, 4.2).min(base_h - 1.0);
     let bowl = TerrainFeature::Bowl(BowlFeature {
         contour,
-        reach: rx.max(ry) * 1.2,
+        reach: rx.min(ry) * 0.7,
         water_level: water,
         max_depth: range(&mut rng, 2.4, 3.4),
         bottom: range(&mut rng, 2.2, 3.2),
         shore: range(&mut rng, 0.15, 0.28),
-        // Ширина залитой полки до внешнего обрыва, м.
-        rim: range(&mut rng, 3.5, 6.5),
+        rim: range(&mut rng, 8.0, 13.0),
     });
 
     LandscapeConfig {

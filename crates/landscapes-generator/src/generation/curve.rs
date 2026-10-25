@@ -343,10 +343,12 @@ pub fn warped_contour(
     let mut pts = Vec::with_capacity(samples);
     for i in 0..samples {
         let a = TAU * i as f32 / samples as f32;
-        let n = m1.get([a as f64 * 2.0, 0.0]) as f32 * 0.7
-            + m2.get([a as f64 * 5.0, 9.0]) as f32 * 0.3;
+        // Шум на окружности замыкается без шва между 0 и 2π.
+        let (x, y) = (f64::from(a.cos()), f64::from(a.sin()));
+        let n = m1.get([x, y]) as f32 * 0.8 + m2.get([x * 2.0 + 9.0, y * 2.0]) as f32 * 0.2;
         let r = 1.0 + wobble * n;
-        pts.push(center + Vec2::new(rx * r * a.cos(), ry * r * a.sin()));
+        let p = Vec2::new(rx * r * a.cos(), ry * r * a.sin());
+        pts.push(center + p);
     }
     pts
 }
@@ -403,5 +405,21 @@ mod tests {
         // Проверка извилистости: отклонение от прямой к оси заметное.
         let max_dev = c.points.iter().map(|p| p.y.abs()).fold(0.0f32, f32::max);
         assert!(max_dev > 1.0, "должны быть заметные изгибы: {max_dev}");
+    }
+
+    #[test]
+    fn contour_closes_without_a_noise_seam() {
+        for seed in 0..24 {
+            let points = warped_contour(Vec2::ZERO, 26.0, 31.0, 0.4, 128, Seed::new(seed));
+            let incoming = (points[0] - points[127]).normalize();
+            let outgoing = (points[1] - points[0]).normalize();
+            assert!(incoming.dot(outgoing) > 0.9, "seed {seed}: шов контура");
+            let closing = points[127].distance(points[0]);
+            let next = points[0].distance(points[1]);
+            assert!(
+                (closing / next - 1.0).abs() < 0.25,
+                "seed {seed}: скачок шага"
+            );
+        }
     }
 }

@@ -672,59 +672,42 @@ mod tests {
     }
 
     #[test]
-    fn pond_water_reaches_shore() {
-        // Отмель у кромки должна быть залита водой: у пруда есть «мелкие»
-        // мокрые узлы (дно неглубоко под урезом) — вода доходит до берега,
-        // а не оставляет сухое «кольцо»-ступеньку.
-        for seed in 0..8u64 {
+    fn large_pond_has_shallows_and_no_shore_cliff() {
+        for seed in 0..8 {
             let land = generate(&resolve(LandscapePreset::Pond, Seed::new(seed)));
-            if !land.has_water {
-                continue;
-            }
-            let n = land.heightfield.n;
-            let hf = &land.heightfield.values;
-            let mut shallow_wet = 0usize;
-            let mut water_vs_cliff = 0usize;
-            for (idx, w) in land.water.levels.iter().enumerate() {
-                if let Some(w) = w {
-                    let h = hf[idx];
-                    // Мелкая прибрежная зона: дно глубже уреза не более чем на
-                    // ~0.45 м (подводная отмель + плавный вход в воду).
-                    if w - h < 0.45 {
-                        shallow_wet += 1;
-                    }
-                    // Вода доходит до самой внешней кромки: рядом есть сухой
-                    // узел, заметно (на ~0.5 м и более) выше этого уровня воды —
-                    // это внешний обрыв, к которому примыкает вода.
-                    let i = idx % n;
-                    let j = idx / n;
-                    let mut cliff = false;
-                    for (ni, nj) in [
-                        (i + 1, j),
-                        (i.wrapping_sub(1), j),
-                        (i, j + 1),
-                        (i, j.wrapping_sub(1)),
-                    ] {
-                        if ni < n && nj < n {
-                            let nidx = nj * n + ni;
-                            if land.water.levels[nidx].is_none() && hf[nidx] > w + 0.5 {
-                                cliff = true;
-                                break;
-                            }
+            let hf = &land.heightfield;
+            let area = land.water.levels.iter().flatten().count() as f32 * hf.step.powi(2);
+            assert!(
+                area > 1500.0 && area < 5000.0,
+                "seed {seed}: площадь {area}"
+            );
+            let mut shallow = 0;
+            let mut shore_edges = 0;
+            for (idx, water) in land.water.levels.iter().enumerate() {
+                let Some(w) = water else { continue };
+                if w - hf.values[idx] < 0.45 {
+                    shallow += 1;
+                }
+                let i = idx % hf.n;
+                let j = idx / hf.n;
+                for (ni, nj) in [
+                    (i + 1, j),
+                    (i.wrapping_sub(1), j),
+                    (i, j + 1),
+                    (i, j.wrapping_sub(1)),
+                ] {
+                    if ni < hf.n && nj < hf.n {
+                        let next = hf.index(ni, nj);
+                        if land.water.levels[next].is_none() {
+                            shore_edges += 1;
+                            assert!(hf.values[next] - w < 0.3, "seed {seed}: обрыв у берега");
                         }
-                    }
-                    if cliff {
-                        water_vs_cliff += 1;
                     }
                 }
             }
             assert!(
-                shallow_wet > 40,
-                "у пруда должна быть залитая отмель (мелководье): {shallow_wet}"
-            );
-            assert!(
-                water_vs_cliff > 10,
-                "вода пруда должна доходить до внешнего обрыва: {water_vs_cliff}"
+                shallow > 40 && shore_edges > 100,
+                "seed {seed}: нет пологого берега"
             );
         }
     }
