@@ -18,7 +18,7 @@ use rand::RngExt;
 
 use super::config::{LandscapeConfig, Longitudinal};
 use super::erosion::erode;
-use super::features::{smoothstep, TerrainFeature};
+use super::features::{TerrainFeature, smoothstep};
 use super::noise::NoiseSampler;
 
 /// Перепад уровня воды между соседними узлами (м), выше которого
@@ -84,9 +84,7 @@ impl Heightfield {
 
     /// Итератор узлов: `(i, j, координата)`.
     pub fn nodes(&self) -> impl Iterator<Item = (usize, usize, Vec2)> + '_ {
-        (0..self.n).flat_map(move |j| {
-            (0..self.n).map(move |i| (i, j, self.node_xy(i, j)))
-        })
+        (0..self.n).flat_map(move |j| (0..self.n).map(move |i| (i, j, self.node_xy(i, j))))
     }
 }
 
@@ -113,8 +111,7 @@ pub struct Landscape {
     pub ground_cloud: PointCloud,
     /// Облако точек воды (поверхности и стенки водопадов).
     pub water_cloud: PointCloud,
-    /// Сплошные вертикальные «занавесы» воды на каскадах (общие для облака
-    /// точек и визуального меша воды).
+    /// Положения и перепады каскадов из продольного профиля русла.
     pub water_walls: Vec<FallsCurtain>,
     /// Минимальная и максимальная высоты рельефа.
     pub min_height: f32,
@@ -186,6 +183,14 @@ pub fn generate(config: &LandscapeConfig) -> Landscape {
     // Делает склоны и русла естественнее, но оставляет структуру (уступы,
     // каньоны, каскады). Вода считается по уже эродированной поверхности.
     erode(&mut heights, n, n, step);
+    // Осадок не должен перекрывать воду у подножия каскада и разрывать русло.
+    for idx in 0..count {
+        if let Some(w) = candidates[idx]
+            && h_structured[idx] < w
+        {
+            heights[idx] = heights[idx].min(h_structured[idx]);
+        }
+    }
 
     // --- 3. вода: где поверхность ниже уровня воды ---
     let mut water_levels = vec![None; count];
@@ -213,10 +218,7 @@ pub fn generate(config: &LandscapeConfig) -> Landscape {
     // Стенки водопадов/порогов: между соседними узлами с резким перепадом
     // уровня воды добавляется вертикальный «столбик» точек.
     add_waterfall_walls(&mut water, &water_levels, n, n, step);
-    // Гарантированные сплошные «занавесы» на вертикальных обрывах профиля
-    // русла (водопады/каскады) — поперёк всей ширины дна.
     let falls_walls = channel_falls_curtains(config);
-    add_channel_falls_walls(&mut water, &falls_walls, &heights, n, step, size_m);
 
     // Вертикальные/почти вертикальные грани рельефа (уступы, обрывы каньона):
     // точечные узлы на горизонтальной сетке там «размазываются» в полосы.
@@ -273,15 +275,15 @@ fn add_waterfall_walls(
     for j in 0..m {
         for i in 0..n {
             let idx = j * n + i;
-            let (w1, p1) = match levels[idx] {
-                Some(w) if i + 1 < n => (w, Vec3::new(x_at(i), y_at(j), w)),
-                _ => continue,
-            };
+            let Some(w1) = levels[idx] else { continue };
+            let p1 = Vec3::new(x_at(i), y_at(j), w1);
             // Правое ребро.
-            let ni = i + 1;
-            let nidx = j * n + ni;
-            if let Some(w2) = levels[nidx] {
-                if (w2 - w1).abs() > WATERFALL_JUMP {
+            if i + 1 < n {
+                let ni = i + 1;
+                let nidx = j * n + ni;
+                if let Some(w2) = levels[nidx]
+                    && (w2 - w1).abs() > WATERFALL_JUMP
+                {
                     let p2 = Vec3::new(x_at(ni), y_at(j), w2);
                     add_vertical_points(cloud, p1, p2, step);
                 }
@@ -339,10 +341,8 @@ pub struct FallsCurtain {
     pub hi: f32,
 }
 
-/// Все вертикальные обрывы воды (водопады/каскады) в конфигурации как
-/// сплошные «занавесы» поперёк русла. Используется и облаком точек, и мешем
-/// воды — чтобы вертикальная стена воды была и в облаке, и в визуальной
-/// модели.
+/// Метаданные перепадов воды вдоль русла. Поверхность каскада в меше и
+/// облаке точек строится по общей сетке поля воды.
 pub fn channel_falls_curtains(config: &LandscapeConfig) -> Vec<FallsCurtain> {
     let mut out = Vec::new();
     for feature in &config.features {
@@ -430,39 +430,6 @@ where
         off += 1.0;
     }
     required
-}
-
-/// Добавить «занавесы» каскадов в облако воды: одиночный вертикальный занавес
-/// поперёк русла, выдвинутый по потоку настолько ([`falls_clear_offset`]),
-/// чтобы его низ (`lo`) не оказывался за грунтом. Для каждой колонки поперёк
-/// русла, под которой дно ушло ниже `lo`, — вертикальный столбик точек от
-/// `lo` до `hi` с шагом `step`.
-fn add_channel_falls_walls(
-    cloud: &mut PointCloud,
-    curtains: &[FallsCurtain],
-    heights: &[f32],
-    n: usize,
-    step: f32,
-    size_m: f32,
-) {
-    if curtains.is_empty() {
-        return;
-    }
-    let terrain = |x: f32, y: f32| sample_height(heights, n, step, size_m, x, y);
-    for c in curtains {
-        let s_clear = falls_clear_offset(c, &terrain);
-        let mut off = -c.hw;
-        while off <= c.hw + 1e-3 {
-            let xy = c.p + c.n * off + c.flow * s_clear;
-            // Колонка участвует, только если дно под ней уже ушло ниже lo.
-            if terrain(xy.x, xy.y) < c.lo - 0.2 {
-                let low = Vec3::new(xy.x, xy.y, c.lo);
-                let high = Vec3::new(xy.x, xy.y, c.hi);
-                add_vertical_points(cloud, low, high, step);
-            }
-            off += step;
-        }
-    }
 }
 
 /// Уплотнение облака грунта на крутых гранях рельефа.
@@ -571,6 +538,13 @@ fn jitter_cloud(cloud: &mut PointCloud, seed: Seed, amplitude: f32) {
 mod tests {
     use super::*;
     use crate::generation::preset::{LandscapePreset, resolve};
+
+    #[test]
+    fn waterfall_points_cover_the_last_grid_column() {
+        let mut cloud = PointCloud::new(PointClass::Water);
+        add_waterfall_walls(&mut cloud, &[Some(2.0), Some(2.0), Some(0.0), Some(0.0)], 2, 2, 0.5);
+        assert!(cloud.points.iter().any(|p| p.position.x == 0.25 && p.position.z > 0.0 && p.position.z < 2.0));
+    }
 
     #[test]
     fn deterministic_generation() {
