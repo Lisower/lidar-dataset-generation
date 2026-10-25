@@ -72,7 +72,7 @@ fn build_spruce_needles(
 
         // Чем длиннее сегмент, тем больше точек с хвоей.
         let anchors =
-            ((length / 0.14).ceil() as usize).clamp(4, 30);
+            ((length / 0.12).ceil() as usize).clamp(4, 30);
 
         for anchor_index in 0..anchors {
             let t =
@@ -81,11 +81,11 @@ fn build_spruce_needles(
             let center = from.position + branch * t;
 
             // Несколько игл вокруг каждой точки ветви.
-            for needle_index in 0..6 {
+            for needle_index in 0..10 {
                 let angle =
                     needle_index as f32
                         * std::f32::consts::TAU
-                        / 6.0
+                        / 10.0
                         + rng.random_range(-0.25..=0.25);
 
                 let up = Vec3::Z;
@@ -114,14 +114,26 @@ fn build_spruce_needles(
 
                 let needle_width = 0.028;
 
+                // Немного отодвигаем иглу от центральной оси ветки.
+                // Так хвоя образует объём вокруг еловой лапы,
+                // а коричневая ветка меньше просматривается.
+                let foliage_radius =
+                    rng.random_range(0.025..=0.07);
+
+                let needle_center =
+                    center + radial * foliage_radius;
+
                 let tip =
-                    center + needle_dir * needle_length;
+                    needle_center + needle_dir * needle_length;
 
                 let c0 = tip;
-                let c1 = center + side0 * needle_width;
+                let c1 =
+                    needle_center + side0 * needle_width;
                 let c2 =
-                    center - needle_dir * needle_length * 0.15;
-                let c3 = center - side0 * needle_width;
+                    needle_center
+                        - needle_dir * needle_length * 0.15;
+                let c3 =
+                    needle_center - side0 * needle_width;
 
                 let [c0, c1, c2, c3] =
                     on_ground([c0, c1, c2, c3]);
@@ -131,7 +143,7 @@ fn build_spruce_needles(
                 ));
 
                 foliage.cloud.push(c0);
-                foliage.cloud.push(center);
+                foliage.cloud.push(needle_center);
 
                 foliage.count += 1;
             }

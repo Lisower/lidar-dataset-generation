@@ -130,7 +130,14 @@ impl PlantSkeleton {
             // Строим вертикальный ствол по частям.
             for tier in 1..=tiers {
                 let t = tier as f32 / tiers as f32;
-                let z = height * t;
+                // Ярусы слегка смещаются по высоте,
+                // чтобы крона не выглядела как ровная лестница.
+                let tier_jitter =
+                    rng.random_range(-0.18..=0.18);
+
+                let z =
+                    (height * t + tier_jitter)
+                        .clamp(0.5, height * 0.96);
 
                 let trunk_point = skeleton.points.len();
 
@@ -207,9 +214,17 @@ impl PlantSkeleton {
                         to: branch_point,
                     });
 
-                    // Боковые веточки второго порядка.
-                    // Располагаем их вдоль каждой основной еловой лапы.
-                    let side_branches = rng.random_range(6usize..=10usize);
+                    // Нижняя часть ели густая, к вершине количество
+                    // боковых веточек постепенно уменьшается.
+                    let (side_min, side_max) = if t < 0.35 {
+                        (12usize, 16usize)
+                    } else if t < 0.70 {
+                        (9usize, 13usize)
+                    } else {
+                        (5usize, 8usize)
+                    };
+
+                    let side_branches = rng.random_range(side_min..=side_max);
 
                     for side_index in 1..=side_branches {
                         let along =
