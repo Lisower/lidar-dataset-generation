@@ -19,7 +19,7 @@ use bevy::math::Vec3;
 use rand::RngExt;
 use rand::rngs::StdRng;
 
-use super::config::{BranchGen, PlantConfig};
+use super::config::{BranchGen, PlantConfig, PlantPreset};
 
 /// Точка скелета — конец сегмента ветки.
 #[derive(Debug, Clone, Copy)]
@@ -61,6 +61,9 @@ pub struct PlantSkeleton {
 impl PlantSkeleton {
     /// Построить скелет из конфигурации (детерминированно от seed).
     pub fn build(config: &PlantConfig) -> Self {
+        if config.preset == PlantPreset::Spruce {
+            return Self::build_spruce(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -98,6 +101,202 @@ impl PlantSkeleton {
         Self::finish(&mut skeleton);
         skeleton
     }
+
+        /// Специальное построение ели:
+        /// вертикальный ствол, ярусы основных ветвей и боковые веточки.
+        fn build_spruce(config: &PlantConfig) -> Self {
+            let mut rng = config.seed.with_label("spruce_skeleton").rng();
+            let mut skeleton = Self::default();
+
+            // Основание дерева.
+            skeleton.points.push(SkeletonPoint {
+                position: Vec3::ZERO,
+                level: 0,
+                branch_id: 0,
+                radius: 0.0,
+                taper: 1.0,
+                children_count: 1,
+            });
+
+            // Высота и толщина ствола немного меняются от seed.
+            let height = rng.random_range(10.0..=16.0);
+            let trunk_radius = rng.random_range(0.28..=0.42);
+
+            // Количество ярусов ели.
+            let tiers = 18usize;
+
+            let mut previous_trunk_point = 0usize;
+
+            // Строим вертикальный ствол по частям.
+            for tier in 1..=tiers {
+                let t = tier as f32 / tiers as f32;
+                let z = height * t;
+
+                let trunk_point = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: Vec3::new(0.0, 0.0, z),
+                    level: tier,
+                    branch_id: 0,
+                    radius: trunk_radius * (1.0 - t * 0.75),
+                    taper: 0.9,
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from: previous_trunk_point,
+                    to: trunk_point,
+                });
+
+                // Нижние ветви длиннее, верхние короче.
+                let crown_factor = 1.0 - t;
+                let base_branch_length = 0.7 + crown_factor * 4.5;
+
+                // Число основных ветвей немного различается между ярусами.
+                let branch_count = rng.random_range(6usize..=9usize);
+
+                // Каждый ярус немного поворачиваем относительно предыдущего,
+                // чтобы ветви не располагались строгими этажами.
+                let tier_offset =
+                    tier as f32 * 17.0 + rng.random_range(-12.0..=12.0);
+
+                for branch_index in 0..branch_count {
+                    // Немного изменяем направление каждой ветви,
+                    // чтобы крона не выглядела слишком геометрической.
+                    let azimuth =
+                        tier_offset
+                            + branch_index as f32 * (360.0 / branch_count as f32)
+                            + rng.random_range(-10.0..=10.0);
+
+                    // Ветви одного яруса немного различаются по длине.
+                    let branch_length =
+                        base_branch_length * rng.random_range(0.82..=1.12);
+
+                    // Нижние ветви почти горизонтальные,
+                    // верхние сильнее направлены вверх.
+                    // Небольшой разброс делает форму естественнее.
+                    let vertical_deg =
+                        82.0 - t * 25.0 + rng.random_range(-6.0..=6.0);
+
+                    let v = vertical_deg.to_radians();
+                    let h = azimuth.to_radians();
+
+                    let direction = Vec3::new(
+                        v.sin() * h.cos(),
+                        v.sin() * h.sin(),
+                        v.cos(),
+                    );
+
+                    let start_position = skeleton.points[trunk_point].position;
+                    let end_position = start_position + direction * branch_length;
+
+                    // Конец основной ветви.
+                    let branch_point = skeleton.points.len();
+
+                    skeleton.points.push(SkeletonPoint {
+                        position: end_position,
+                        level: tier,
+                        branch_id: branch_index + 1,
+                        radius: 0.08 * (1.0 - t * 0.5),
+                        taper: 0.75,
+                        children_count: 0,
+                    });
+
+                    skeleton.segments.push(SkeletonSegment {
+                        from: trunk_point,
+                        to: branch_point,
+                    });
+
+                    // Боковые веточки второго порядка.
+                    // Располагаем их вдоль каждой основной еловой лапы.
+                    let side_branches = rng.random_range(6usize..=10usize);
+
+                    for side_index in 1..=side_branches {
+                        let along =
+                            side_index as f32 / (side_branches + 1) as f32;
+
+                        let attach_position =
+                            start_position + direction * branch_length * along;
+
+                        // Ближе к концу основной ветви боковые веточки короче.
+                        let side_length =
+                            branch_length
+                                * (0.22 - along * 0.08)
+                                * rng.random_range(0.75..=1.15);
+
+                        // Чередуем веточки по двум сторонам основной ветви.
+                        let side_spread = rng.random_range(50.0..=75.0);
+                        let side_jitter = rng.random_range(-8.0..=8.0);
+
+                        let side_angle = if side_index % 2 == 0 {
+                            azimuth + side_spread + side_jitter
+                        } else {
+                            azimuth - side_spread + side_jitter
+                        };
+
+                        let side_h = side_angle.to_radians();
+                        let side_vertical =
+                            (78.0 - t * 15.0).to_radians();
+
+                        let side_direction = Vec3::new(
+                            side_vertical.sin() * side_h.cos(),
+                            side_vertical.sin() * side_h.sin(),
+                            side_vertical.cos(),
+                        );
+
+                        let side_end =
+                            attach_position + side_direction * side_length;
+
+                        // Точка крепления боковой веточки.
+                        let attach_idx = skeleton.points.len();
+
+                        skeleton.points.push(SkeletonPoint {
+                            position: attach_position,
+                            level: tier,
+                            branch_id: branch_index + 1,
+                            radius: 0.035 * (1.0 - t * 0.4),
+                            taper: 0.75,
+                            children_count: 1,
+                        });
+
+                        skeleton.segments.push(SkeletonSegment {
+                            from: trunk_point,
+                            to: attach_idx,
+                        });
+
+                        // Конец боковой веточки.
+                        let side_idx = skeleton.points.len();
+
+                        skeleton.points.push(SkeletonPoint {
+                            position: side_end,
+                            level: tier + 1,
+                            branch_id: side_index,
+                            radius: 0.025 * (1.0 - t * 0.4),
+                            taper: 0.7,
+                            children_count: 0,
+                        });
+
+                        skeleton.segments.push(SkeletonSegment {
+                            from: attach_idx,
+                            to: side_idx,
+                        });
+                    }
+                }
+
+                // Учитываем продолжение ствола и основные ветви.
+                skeleton.points[trunk_point].children_count =
+                    if tier < tiers {
+                        branch_count + 1
+                    } else {
+                        branch_count
+                    };
+
+                previous_trunk_point = trunk_point;
+            }
+
+            Self::finish(&mut skeleton);
+            skeleton
+        }
 
     /// Построить скелет из готовой конфигурации, но с внешним rng (для тестов).
     ///

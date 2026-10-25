@@ -44,6 +44,8 @@ pub enum PlantPreset {
     /// Лиственное дерево: массивная крона из листьев на концах веток.
     #[default]
     DeciduousTree,
+    /// Ель: хвойное дерево с выраженной конической кроной.
+    Spruce,
     /// Куст: густая листва от самой земли.
     Bush,
     /// Высокая густая трава (пышные пучки).
@@ -54,8 +56,9 @@ pub enum PlantPreset {
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::DeciduousTree,
+        Self::Spruce,
         Self::Bush,
         Self::TallGrass,
         Self::SparseGrass,
@@ -65,6 +68,7 @@ impl PlantPreset {
     pub const fn label(self) -> &'static str {
         match self {
             Self::DeciduousTree => "лиственное дерево",
+            Self::Spruce => "ель",
             Self::Bush => "куст",
             Self::TallGrass => "высокая трава",
             Self::SparseGrass => "низкая трава",
@@ -74,7 +78,7 @@ impl PlantPreset {
     /// Тип растения, к которому относится пресет.
     pub const fn plant_type(self) -> PlantType {
         match self {
-            Self::DeciduousTree => PlantType::Tree,
+            Self::DeciduousTree | Self::Spruce => PlantType::Tree,
             Self::Bush => PlantType::Bush,
             Self::TallGrass | Self::SparseGrass => PlantType::Grass,
         }
@@ -92,6 +96,7 @@ impl PlantPreset {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "deciduous" | "дерево" | "лиственное" => Some(Self::DeciduousTree),
+            "spruce" | "ель" => Some(Self::Spruce),
             "bush" | "куст" => Some(Self::Bush),
             "tallgrass" | "высокая трава" | "трава" => Some(Self::TallGrass),
             "sparsegrass" | "низкая трава" => Some(Self::SparseGrass),
