@@ -20,11 +20,11 @@
 use bevy::ecs::resource::Resource;
 use bevy::math::Vec2;
 use generation_core::Seed;
-use rand::rngs::StdRng;
 use rand::RngExt;
+use rand::rngs::StdRng;
 
 use super::config::{BasePlane, LandscapeConfig, Longitudinal, TerrainNoise};
-use super::curve::{warped_contour, winding_path, Curve};
+use super::curve::{Curve, warped_contour, winding_path};
 use super::features::{BowlFeature, ChannelFeature, StepFeature, TerrainFeature};
 use super::profile::Profile;
 
@@ -54,11 +54,13 @@ pub enum LandscapePreset {
     SlopingRiver,
     /// Водопады: один или несколько каскадов вдоль русла.
     Waterfalls,
+    /// Холмистая местность: несколько широких извилистых гряд.
+    Hills,
 }
 
 impl LandscapePreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Plain,
         Self::Slope,
         Self::PlainSlope,
@@ -70,6 +72,7 @@ impl LandscapePreset {
         Self::Shore,
         Self::SlopingRiver,
         Self::Waterfalls,
+        Self::Hills,
     ];
 
     /// Название для панели информации.
@@ -86,6 +89,7 @@ impl LandscapePreset {
             Self::Shore => "берег реки/озера",
             Self::SlopingRiver => "наклонная река",
             Self::Waterfalls => "водопады",
+            Self::Hills => "холмы",
         }
     }
 
@@ -102,15 +106,24 @@ impl LandscapePreset {
         match name.to_ascii_lowercase().as_str() {
             "plain" | "равнина" | "ровнина" => Some(Self::Plain),
             "slope" | "склон" => Some(Self::Slope),
-            "plainslope" | "равнина-склон" | "равнина_склон" => Some(Self::PlainSlope),
-            "multilevel" | "разноуровневая" | "террасы" | "терраса" => Some(Self::MultiLevel),
+            "plainslope" | "равнина-склон" | "равнина_склон" => {
+                Some(Self::PlainSlope)
+            }
+            "multilevel" | "разноуровневая" | "террасы" | "терраса" => {
+                Some(Self::MultiLevel)
+            }
             "canyon" | "уступ каньона" | "уступ" => Some(Self::CanyonLedge),
             "gorge" | "ущелье" | "каньон" => Some(Self::Gorge),
             "river" | "речка" | "река" => Some(Self::River),
             "pond" | "пруд" | "озеро" => Some(Self::Pond),
             "shore" | "берег" => Some(Self::Shore),
-            "slopingriver" | "наклонная река" | "горная река" => Some(Self::SlopingRiver),
-            "waterfall" | "waterfalls" | "водопад" | "водопады" => Some(Self::Waterfalls),
+            "slopingriver" | "наклонная река" | "горная река" => {
+                Some(Self::SlopingRiver)
+            }
+            "waterfall" | "waterfalls" | "водопад" | "водопады" => {
+                Some(Self::Waterfalls)
+            }
+            "hills" | "холмы" => Some(Self::Hills),
             _ => None,
         }
     }
@@ -130,6 +143,7 @@ pub fn resolve(preset: LandscapePreset, seed: Seed) -> LandscapeConfig {
         LandscapePreset::Shore => shore(seed),
         LandscapePreset::SlopingRiver => sloping_river(seed),
         LandscapePreset::Waterfalls => waterfalls(seed),
+        LandscapePreset::Hills => hills(seed),
     };
     cfg.seed = seed;
     cfg.label = preset.label();
@@ -610,6 +624,31 @@ fn waterfalls(seed: Seed) -> LandscapeConfig {
     }
 }
 
+/// Несколько широких гряд разной высоты, направления и кривизны.
+fn hills(seed: Seed) -> LandscapeConfig {
+    let mut rng = rng_for(LandscapePreset::Hills, seed);
+    let count = rng.random_range(2..=3);
+    let mut features = Vec::with_capacity(count);
+    for k in 0..count {
+        features.push(TerrainFeature::Step(StepFeature {
+            curve: seam_through(
+                Vec2::new(range(&mut rng, -28.0, 28.0), range(&mut rng, -28.0, 28.0)),
+                range(&mut rng, 0.0, std::f32::consts::PI),
+                range(&mut rng, 9.0, 16.0),
+                seed.with_label("холм-гребень").child(k as u64),
+            ),
+            profile: Profile::dip(-range(&mut rng, 5.0, 12.0), range(&mut rng, 35.0, 60.0)),
+        }));
+    }
+    LandscapeConfig {
+        seed,
+        base: BasePlane::flat(range(&mut rng, 2.0, 5.0)),
+        features,
+        noise: rocky(LandscapePreset::Hills, seed, (0.4, 0.9), (0.04, 0.08)),
+        ..default_config()
+    }
+}
+
 /// Базовая конфигурация по умолчанию (остальные поля заполняются в пресетах).
 fn default_config() -> LandscapeConfig {
     LandscapeConfig {
@@ -769,5 +808,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hills_are_in_the_preset_cycle_and_parser() {
+        assert_eq!(
+            LandscapePreset::from_name("hills"),
+            Some(LandscapePreset::Hills)
+        );
+        assert_eq!(LandscapePreset::Hills.next(), LandscapePreset::Plain);
+        assert_eq!(LandscapePreset::Waterfalls.next(), LandscapePreset::Hills);
+        assert!(resolve(LandscapePreset::Hills, Seed::new(3)).features.len() >= 2);
     }
 }
