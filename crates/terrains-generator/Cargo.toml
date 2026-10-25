@@ -7,3 +7,5 @@ edition = "2024"
 bevy-utils = { path = "../bevy-utils" }
 bevy.workspace = true
 rand.workspace = true
+generation-core = { path = "../generation-core" }
+landscapes-generator = { path = "../landscapes-generator" }
