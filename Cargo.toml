@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.94" # Минимальная версия Rust
+rust-version = "1.97.1" # Минимальная версия Rust
 repository = "https://github.com/Lisower/lidar-dataset-generator"
 
 [workspace.dependencies]
