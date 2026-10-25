@@ -1,4 +1,5 @@
-﻿[package]
+﻿
+[package]
 name = "terrains-generator"
 version = "0.1.0"
 edition = "2024"
@@ -9,3 +10,5 @@ bevy.workspace = true
 rand.workspace = true
 generation-core = { path = "../generation-core" }
 landscapes-generator = { path = "../landscapes-generator" }
+plants-generator = { path = "../plants-generator" }
+buildings-generator = { path = "../buildings-generator" }
