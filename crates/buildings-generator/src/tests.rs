@@ -171,10 +171,18 @@ fn half_hip_has_sloping_ends_and_planar_sides() {
     for (length, width) in [(12.0, 8.0), (8.0, 12.0), (5.0, 5.0)] {
         for pitch in [5.0, 27.0, 40.0] {
             let wy = width * 0.5 + 0.4;
-            for ridge in [-0.2 * wy, 0.0, 0.2 * wy] {
+            for ridge in [-0.35 * wy, 0.0, 0.35 * wy] {
                 let faces = roof_faces(
                     RoofStyle::HalfHip, length, width, 0.4, pitch, &config(3), ridge,
                 );
+                // Hips occupy a substantial part of the roof height and depth.
+                let lx = length * 0.5 + 0.4;
+                let hip = faces[4].points();
+                let max_z = hip.iter().map(|p| p.z).fold(0.0_f32, f32::max);
+                let rise = pitch.to_radians().tan() * wy;
+                assert!(max_z / rise >= 0.6);
+                let min_x = hip.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+                assert!((lx - min_x) / lx >= 0.3);
                 for (face, sign) in [(&faces[4], 1.0), (&faces[5], -1.0)] {
                     let n = face.normal();
                     assert!(n.x * sign > 0.01 && n.z > 0.01);
@@ -190,6 +198,66 @@ fn half_hip_has_sloping_ends_and_planar_sides() {
                 assert!(faces[0].normal().dot(faces[1].normal()) > 0.999);
                 assert!(faces[2].normal().dot(faces[3].normal()) > 0.999);
             }
+        }
+    }
+}
+
+#[test]
+fn compound_presets_have_empty_notches_and_no_shared_wall_points() {
+    use crate::generation::BuildingPreset;
+    for preset in [BuildingPreset::LShaped, BuildingPreset::WithAnnex] {
+        for seed in 0..12 {
+            let mut cfg = config(seed);
+            cfg.preset = preset;
+            cfg.point_jitter = 0.0;
+            let b = Building::generate(&cfg);
+            let repeated = Building::generate(&cfg);
+            assert_eq!(b.point_cloud, repeated.point_cloud);
+            assert_eq!(b.config.preset, preset);
+            assert_eq!(b.roof, RoofStyle::Flat);
+            let joint = b.size.x * 0.12;
+            let ah = if preset == BuildingPreset::LShaped { b.size.z } else { b.floor_height * 0.65 };
+            for point in &b.point_cloud.points {
+                let p = point.position;
+                assert!(p.is_finite());
+                assert!(p.z >= -0.02);
+                assert!(!(p.x > joint + 0.15 && p.y > 0.15), "filled footprint notch: {p:?}");
+                assert!(!((p.x - joint).abs() < 0.001 && p.y < -0.2 && p.y > -b.size.y*0.5+0.2 && p.z > 0.1 && p.z < ah-0.1), "internal shared wall: {p:?}");
+            }
+            let roofs = &b.root.children.last().unwrap().faces;
+            let first = roofs[0].points()[0].z;
+            let second = roofs[1].points()[0].z;
+            if preset == BuildingPreset::LShaped { assert!((first-second).abs() < 0.001); }
+            else { assert!(first > second + 0.5); }
+        }
+    }
+}
+
+#[test]
+fn tall_presets_generate_complete_repeatable_buildings() {
+    use crate::generation::BuildingPreset;
+    for (preset,min_floors,max_floors) in [
+        (BuildingPreset::ApartmentBlock,6,16),
+        (BuildingPreset::Skyscraper,32,60),
+    ] {
+        let mut cfg = config(42);
+        cfg.preset = preset;
+        let b = Building::generate(&cfg);
+        let repeated = Building::generate(&cfg);
+        assert_eq!(b.point_cloud,repeated.point_cloud);
+        assert_eq!(b.config.preset,preset);
+        assert!((min_floors..=max_floors).contains(&b.floors));
+        assert_eq!(b.root.children.len(),b.floors as usize+1);
+        assert_eq!(b.roof,RoofStyle::Flat);
+        assert!(b.parapet && !b.dormer);
+        assert!((b.size.z-b.floor_height*b.floors as f32).abs()<0.001);
+        let max_z=b.point_cloud.points.iter().map(|p|p.position.z).fold(f32::NEG_INFINITY,f32::max);
+        assert!(max_z>b.size.z);
+        assert!(max_z<=b.total_height()+0.02);
+        assert!(b.point_cloud.points.iter().all(|p|p.position.is_finite() && p.position.z>=-0.02));
+        if preset==BuildingPreset::Skyscraper {
+            assert!(b.size.z>b.size.x.max(b.size.y)*3.0);
+            assert_eq!(b.config.balcony_probability,0.0);
         }
     }
 }

@@ -9,7 +9,8 @@ pub mod elements;
 pub mod palette;
 pub mod part;
 pub mod roof;
+pub mod preset;
 
 pub use building::{Building, BuildingColors};
-pub use config::{BuildingConfig, RoofStyle};
+pub use config::{BuildingConfig, BuildingPreset, RoofStyle};
 pub use part::Part;
