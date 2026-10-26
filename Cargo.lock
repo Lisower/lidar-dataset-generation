@@ -3610,6 +3610,8 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy-utils",
+ "buildings-generator",
+ "generation-core",
  "rand 0.10.3",
 ]
 
