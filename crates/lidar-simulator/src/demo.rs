@@ -43,6 +43,7 @@ struct Demo {
     frame: ScanFrame,
     accumulated: ScanAccumulator,
     cumulative: bool,
+    show_context: bool,
     running: bool,
     timer: Timer,
     status: String,
@@ -81,6 +82,7 @@ impl Demo {
             frame,
             accumulated,
             cumulative: false,
+            show_context: true,
             running: false,
             timer: Timer::from_seconds(0.15, TimerMode::Repeating),
             status: String::new(),
@@ -113,6 +115,24 @@ impl Demo {
     }
 
     fn mesh(&self) -> Mesh {
+        if !self.show_context {
+            let mut mesh = point_cloud_mesh(self.result());
+            let colors: Vec<[f32; 4]> = self
+                .result()
+                .points
+                .iter()
+                .map(|point| {
+                    if point.class == PointClass::Noise {
+                        [1.0, 0.55, 0.05, 1.0]
+                    } else {
+                        let c = point.class.color().to_srgba();
+                        [c.red, c.green, c.blue, 1.0]
+                    }
+                })
+                .collect();
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+            return mesh;
+        }
         let mut mask = vec![false; self.scene.cloud.len()];
         if self.cumulative {
             mask.clone_from(&self.accumulated.seen);
@@ -276,7 +296,9 @@ fn controls(
         if !keys.pressed(KeyCode::ShiftLeft) && !keys.pressed(KeyCode::ShiftRight) {
             options.seed = Seed::from_entropy();
         }
+        let show_context = demo.show_context;
         *demo = Demo::new(options);
+        demo.show_context = show_context;
     }
     let mut recapture = false;
     if keys.just_pressed(KeyCode::BracketLeft) {
@@ -341,6 +363,9 @@ fn controls(
     if keys.just_pressed(KeyCode::KeyM) {
         demo.cumulative = !demo.cumulative;
     }
+    if keys.just_pressed(KeyCode::KeyV) {
+        demo.show_context = !demo.show_context;
+    }
     // Не трогаем ResMut при простом осмотре: меш не перестраивается каждый кадр.
     let advance = demo.running
         && demo
@@ -380,7 +405,7 @@ fn refresh(
     }
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "LiDAR · seed {} · ракурс {}/{}\nИсходное облако: {} · сетка {:.2} м\nШаг сканера: {:.2} м · Low Noise: {:.1}%\nРежим: {} · кадров накоплено: {}\nТочек в результате: {} · шумовых: {}\n\nКрасные — захвачены · серые — не захвачены · оранжевые — Low Noise\n←/→ ракурс · Space кадр из камеры · T траектория · P пауза\nM кадр/накопление · C сброс · [/] шаг · N шум · X сохранить PLY\nR новое здание · Shift+R повтор · Tab камера · мышь вращение/зум\n{}",
+            "LiDAR · seed {} · ракурс {}/{}\nИсходное облако: {} · сетка {:.2} м\nШаг сканера: {:.2} м · Low Noise: {:.1}%\nРежим: {} · кадров накоплено: {}\nТочек в результате: {} · шумовых: {}\nОтображение: {} · высота сканера {:.1} м\n\nКрасные — захвачены · серые — не захвачены · оранжевые — Low Noise\n←/→ ракурс · Space кадр из камеры · T траектория · P пауза\nV всё/отсканированное · M кадр/накопление · C сброс\n[/] шаг · N шум · X сохранить PLY\nR новое здание · Shift+R повтор · Tab камера · мышь вращение/зум\nКамера — осмотр; Space — переснять с её позиции\n{}",
             demo.options.seed,
             demo.index + 1,
             demo.path.len(),
@@ -400,6 +425,12 @@ fn refresh(
                 .iter()
                 .filter(|p| p.class == PointClass::Noise)
                 .count(),
+            if demo.show_context {
+                "всё облако"
+            } else {
+                "только отсканированное"
+            },
+            demo.pose.position.y,
             demo.status
         );
     }
@@ -467,5 +498,58 @@ mod tests {
                 .count(),
             captured
         );
+    }
+
+    #[test]
+    fn scan_only_mesh_matches_single_frame_and_accumulated_result() {
+        let mut demo = Demo::new(DemoOptions {
+            source_step: 0.3,
+            scanner: ScannerConfig {
+                noise_probability: 1.0,
+                ..default()
+            },
+            ..default()
+        });
+        demo.show_context = false;
+        let check = |demo: &Demo| {
+            let mesh = demo.mesh();
+            let Some(VertexAttributeValues::Float32x3(positions)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("missing positions");
+            };
+            let expected: Vec<_> = demo.result().positions().map(|p| p.to_array()).collect();
+            assert_eq!(positions, &expected);
+            let Some(VertexAttributeValues::Float32x4(colors)) =
+                mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+            else {
+                panic!("missing colors");
+            };
+            assert!(!colors.contains(&[0.38, 0.40, 0.43, 1.0]));
+            assert_eq!(
+                colors
+                    .iter()
+                    .filter(|&&c| c == [1.0, 0.55, 0.05, 1.0])
+                    .count(),
+                demo.result()
+                    .points
+                    .iter()
+                    .filter(|p| p.class == PointClass::Noise)
+                    .count()
+            );
+        };
+        check(&demo);
+        let first = demo.frame.cloud.clone();
+        demo.capture(demo.path[demo.path.len() / 2], false);
+        demo.cumulative = true;
+        assert!(demo.result().len() > first.len());
+        check(&demo);
+        let accumulated = demo.result().clone();
+        demo.show_context = true;
+        assert!(demo.mesh().count_vertices() > accumulated.len());
+        assert_eq!(demo.result(), &accumulated);
+        demo.show_context = false;
+        demo.cumulative = false;
+        check(&demo);
     }
 }

@@ -9,6 +9,69 @@ use generation_core::Seed;
 
 use crate::generation::{Building, BuildingConfig, RoofStyle};
 
+#[test]
+fn boxed_cloud_is_on_requested_outer_face_for_both_axis_signs() {
+    use crate::generation::Part;
+    use bevy::prelude::*;
+    let cfg = BuildingConfig {
+        point_jitter: 0.0,
+        ..Default::default()
+    };
+    let size = Vec3::new(4.0, 0.4, 3.0);
+    for outward in [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::NEG_Y,
+        Vec3::Z,
+        Vec3::NEG_Z,
+    ] {
+        let part = Part::boxed(
+            "test",
+            size,
+            outward,
+            Color::WHITE,
+            Transform::IDENTITY,
+            &cfg,
+        );
+        assert!(!part.cloud.is_empty());
+        let expected = outward.abs().dot(size) * 0.5;
+        for point in &part.cloud.points {
+            assert!(
+                (point.position.dot(outward) - expected).abs() < 1e-5,
+                "outward={outward:?}, point={:?}, expected={expected}",
+                point.position
+            );
+        }
+    }
+}
+
+#[test]
+fn wall_cloud_is_on_outer_face_for_every_facade() {
+    use crate::generation::elements::{Facade, WallCtx, wall_part};
+    use bevy::prelude::*;
+    let cfg = BuildingConfig {
+        point_jitter: 0.0,
+        ..Default::default()
+    };
+    for facade in Facade::ALL {
+        let ctx = WallCtx {
+            facade,
+            center: Vec3::ZERO,
+            thickness: cfg.wall_thickness,
+        };
+        let wall = wall_part(&ctx, 5.0, 3.0, Color::WHITE, &cfg, &[]);
+        assert!(!wall.cloud.is_empty());
+        for point in &wall.cloud.points {
+            assert!(
+                (point.position.dot(facade.outward()) - cfg.wall_thickness * 0.5).abs() < 1e-5,
+                "facade={facade:?}, point={:?}",
+                point.position
+            );
+        }
+    }
+}
+
 /// Конфигурация с явным seed.
 fn config(seed: u64) -> BuildingConfig {
     BuildingConfig {
@@ -31,7 +94,10 @@ fn deterministic_by_seed() {
 fn different_seeds_differ() {
     let a = Building::generate(&config(1));
     let b = Building::generate(&config(2));
-    assert_ne!(a.point_cloud, b.point_cloud, "разные seed дали одинаковое здание");
+    assert_ne!(
+        a.point_cloud, b.point_cloud,
+        "разные seed дали одинаковое здание"
+    );
 }
 
 #[test]

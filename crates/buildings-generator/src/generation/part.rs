@@ -280,7 +280,7 @@ impl Part {
 }
 
 /// Полигон внешней грани параллелепипеда (для облака точек).
-fn outer_face_polygon(size: Vec3, outward: Vec3) -> Polygon {
+pub(crate) fn outer_face_polygon(size: Vec3, outward: Vec3) -> Polygon {
     let outward = outward.normalize();
     // Ось «вдоль» перпендикулярна outward (выбираем оси X или Y).
     let along = if outward.x.abs() < 0.9 {
@@ -289,9 +289,11 @@ fn outer_face_polygon(size: Vec3, outward: Vec3) -> Polygon {
         Vec3::Y
     };
     let up = outward.cross(along).normalize();
-    let h_along = along.x * size.x + along.y * size.y + along.z * size.z;
-    let h_up = up.x * size.x + up.y * size.y + up.z * size.z;
-    let h_out = outward.x * size.x + outward.y * size.y + outward.z * size.z;
+    // Размер проекции положителен; знак задаёт сам вектор направления.
+    // Иначе для -X/-Y точки оказываются на противоположной, внутренней грани.
+    let h_along = along.abs().dot(size);
+    let h_up = up.abs().dot(size);
+    let h_out = outward.abs().dot(size);
 
     let center = outward * (h_out * 0.5);
     let c1 = center + along * (h_along * 0.5) + up * (h_up * 0.5);

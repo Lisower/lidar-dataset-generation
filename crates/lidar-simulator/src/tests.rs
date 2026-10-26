@@ -202,6 +202,106 @@ fn building_cloud_uses_world_up_and_preserves_hierarchy() {
 }
 
 #[test]
+fn generated_buildings_show_front_walls_from_all_four_sides() {
+    // Размечаем реальные точки стен, а не лишь проверяем ненулевое число
+    // отсчётов (ими раньше могла оказаться одна крыша).
+    fn wall_mask(part: &Part, mask: &mut Vec<bool>) {
+        mask.extend(std::iter::repeat_n(part.name == "стена", part.cloud.len()));
+        for child in &part.children {
+            wall_mask(child, mask);
+        }
+    }
+    let mut roof_styles = std::collections::HashSet::new();
+    for seed in 0..40 {
+        let building = Building::generate(&buildings_generator::BuildingConfig {
+            seed: Seed(seed),
+            point_step: 0.3,
+            wall_point_step: 0.3,
+            point_jitter: 0.0,
+            ..default()
+        });
+        if !roof_styles.insert(building.roof.label()) {
+            continue;
+        }
+        let scene = ScanScene::from_building(&building);
+        let mut mask = Vec::new();
+        wall_mask(&building.root, &mut mask);
+        assert_eq!(mask.len(), scene.cloud.len());
+        let target = Vec3::new(0.0, building.size.z * 0.5, 0.0);
+        for outward in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+            let pose = ScannerPose::looking_at(
+                target + outward * building.footprint_diagonal() * 2.0,
+                target,
+            );
+            let frame = scene.scan(pose, &config(), Seed(seed)).unwrap();
+            let wall_points = frame.source_indices.iter().filter(|&&i| mask[i]).count();
+            assert!(
+                wall_points > 20,
+                "seed={seed}, roof={:?}, side={outward:?}, wall_points={wall_points}",
+                building.roof
+            );
+            // Ни одной точки противоположной стены через объём здания.
+            assert!(
+                frame
+                    .source_indices
+                    .iter()
+                    .filter(|&&i| mask[i])
+                    .all(|&i| scene.cloud.points[i].position.dot(outward) > 0.0)
+            );
+        }
+    }
+    assert_eq!(roof_styles.len(), buildings_generator::RoofStyle::ALL.len());
+}
+
+#[test]
+fn side_scan_captures_front_wall_but_not_roof_top_or_back_wall() {
+    // Закрытый объём с точно известными видимыми поверхностями.
+    let positions = [
+        Vec3::new(2.0, 1.5, 0.0),
+        Vec3::new(-2.0, 1.5, 0.0),
+        Vec3::new(0.0, 1.5, 2.0),
+        Vec3::new(0.0, 1.5, -2.0),
+        Vec3::new(0.0, 3.0, 0.0),
+        Vec3::new(1.0, 3.0, 1.0),
+    ];
+    let triangles = generation_core::geometry::box_polygons(Vec3::new(4.0, 3.0, 4.0))
+        .into_iter()
+        .flat_map(|face| {
+            face.triangulate()
+                .map(|p| p + Vec3::Y * 1.5)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .chunks_exact(3)
+        .map(|t| [t[0], t[1], t[2]])
+        .collect();
+    let scene = ScanScene::new(cloud(&positions), triangles);
+    let target = Vec3::new(0.0, 1.5, 0.0);
+    for (expected, outward) in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
+        .into_iter()
+        .enumerate()
+    {
+        let frame = scene
+            .scan(
+                ScannerPose::looking_at(target + outward * 10.0, target),
+                &config(),
+                Seed(1),
+            )
+            .unwrap();
+        assert_eq!(frame.source_indices, vec![expected], "side={outward:?}");
+    }
+    // Сверху точки кровли видны, центры стен — нет.
+    let above = ScannerPose::looking_at(Vec3::new(0.0, 10.0, 0.0), target);
+    assert_eq!(
+        scene
+            .scan(above, &config(), Seed(1))
+            .unwrap()
+            .source_indices,
+        vec![4, 5]
+    );
+}
+
+#[test]
 fn invalid_settings_are_errors() {
     let scene = ScanScene::new(PointCloud::default(), vec![]);
     for cfg in [
