@@ -7,14 +7,14 @@
 
 use bevy::asset::{Assets, RenderAssetUsages};
 use bevy::color::Color;
-use bevy::math::{Vec2, Vec3};
+use bevy::math::Vec3;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::visuals::materials::material;
 use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
 
-use crate::generation::{falls_clear_offset, FallsCurtain, Heightfield, Landscape, WaterField};
+use crate::generation::{FallsCurtain, Heightfield, Landscape, WaterField};
 
 /// Маркер корневой сущности ландшафта (для перегенерации).
 #[derive(Component, Debug, Clone, Copy)]
@@ -185,14 +185,13 @@ pub fn terrain_mesh(hf: &Heightfield) -> Mesh {
 /// Меш воды: ячейки сетки, в которых вся вода присутствует; высота углов —
 /// своя у каждого (ровная вода, ленты наклонных рек и стенки водопадов
 /// получаются естественно). Ячейки с частичной водой отбрасываются (край
-/// уреза слегка «пикселизируется», но не рвётся). На вертикальных обрывах
-/// русла дополнительно строятся сплошные «занавесы» (`curtains`) — иначе
-/// падение воды на каскаде упирается в тонкую наклонную полоску ячейки и
-/// визуально почти не видно.
+/// уреза слегка «пикселизируется»). Каскады соединяются теми же ячейками:
+/// отдельная смещённая стенка давала разрывы у верхнего края водопада.
+/// shortcut: падение занимает одну ячейку сетки; для нависающих скал нужен объёмный рельеф.
 pub fn water_mesh(
     hf: &Heightfield,
     water: &WaterField,
-    curtains: &[FallsCurtain],
+    _curtains: &[FallsCurtain],
 ) -> Option<Mesh> {
     let n = hf.n;
     let wet = |i: usize, j: usize| water.levels.get(hf.index(i, j)).copied().flatten();
@@ -239,41 +238,6 @@ pub fn water_mesh(
             normals.push(n2.to_array());
             normals.push(n2.to_array());
             indices.extend([base, base + 1, base + 2, base + 3, base + 4, base + 5]);
-        }
-    }
-
-    // Одиночный вертикальный «занавес» воды на каскаде: стена поперёк русла
-    // от `lo` до `hi`, выдвинутая по потоку настолько ([`falls_clear_offset`]),
-    // чтобы её низ не упирался в наклонный грунт под водой (иначе нижняя
-    // часть стены оказывается за грунтом и не видна). Колонки, под которыми
-    // дно не ушло ниже `lo`, пропускаем.
-    let wall_step = 0.5;
-    for c in curtains {
-        let s_clear = falls_clear_offset(c, &|x, y| hf.height_at(x, y));
-        let cols = ((c.hw * 2.0) / wall_step).ceil() as usize + 1;
-        let mut prev_xy: Option<Vec2> = None;
-        for k in 0..cols {
-            let off = -c.hw + k as f32 * wall_step;
-            let xy = c.p + c.n * off + c.flow * s_clear;
-            // Колонка участвует, если дно под ней уже ушло ниже lo.
-            let clear = hf.height_at(xy.x, xy.y) < c.lo - 0.2;
-            if clear {
-                if let Some(p0) = prev_xy {
-                    // Квад между колонками p0 и xy: (p0,hi)-(xy,hi)-(xy,lo)-(p0,lo).
-                    let v0 = Vec3::new(p0.x, p0.y, c.hi);
-                    let v1 = Vec3::new(xy.x, xy.y, c.hi);
-                    let v2 = Vec3::new(xy.x, xy.y, c.lo);
-                    let v3 = Vec3::new(p0.x, p0.y, c.lo);
-                    let nrm = (v1 - v0).cross(Vec3::Z).normalize_or_zero();
-                    let base = positions.len() as u32;
-                    for v in [v0, v1, v2, v3] {
-                        positions.push(v.to_array());
-                        normals.push(nrm.to_array());
-                    }
-                    indices.extend([base, base + 1, base + 2, base + 2, base + 3, base]);
-                }
-            }
-            prev_xy = if clear { Some(xy) } else { None };
         }
     }
 

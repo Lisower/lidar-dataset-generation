@@ -4,7 +4,30 @@ use bevy::ecs::resource::Resource;
 use generation_core::Seed;
 use serde::{Deserialize, Serialize};
 
-/// Тип крыши.
+/// Preset controlling the building footprint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuildingPreset {
+    #[default]
+    Rectangular,
+    LShaped,
+    WithAnnex,
+    ApartmentBlock,
+    Skyscraper,
+}
+impl BuildingPreset {
+    pub const ALL: [Self; 5] = [Self::Rectangular, Self::LShaped, Self::WithAnnex, Self::ApartmentBlock, Self::Skyscraper];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rectangular => "Rectangular",
+            Self::LShaped => "L-shaped",
+            Self::WithAnnex => "House with annex",
+            Self::ApartmentBlock => "Apartment block",
+            Self::Skyscraper => "Skyscraper",
+        }
+    }
+}
+
+/// Roof style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RoofStyle {
     /// Плоская (с парапетом или со свесом).
@@ -53,6 +76,8 @@ impl RoofStyle {
 /// Конфигурация генерации одного здания.
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct BuildingConfig {
+    #[serde(default)]
+    pub preset: BuildingPreset,
     /// Глобальный seed — всё остальное детерминировано от него.
     pub seed: Seed,
 
@@ -112,6 +137,10 @@ pub struct BuildingConfig {
     // --- балконы ---
     /// Вероятность того, что на не-первом этаже появится балкон.
     pub balcony_probability: f32,
+    #[serde(default = "default_door_canopy_probability")]
+    pub door_canopy_probability: f32,
+    #[serde(default = "default_balcony_canopy_probability")]
+    pub balcony_canopy_probability: f32,
     pub balcony_width: f32,
     pub balcony_depth: f32,
     pub balcony_railing_height: f32,
@@ -142,6 +171,7 @@ pub struct BuildingConfig {
 impl Default for BuildingConfig {
     fn default() -> Self {
         Self {
+            preset: BuildingPreset::default(),
             seed: Seed::default(),
             min_size: 5.0,
             max_size: 15.0,
@@ -168,14 +198,16 @@ impl Default for BuildingConfig {
             door_width: 0.9,
             door_height: 2.05,
             balcony_probability: 0.6,
+            door_canopy_probability: default_door_canopy_probability(),
+            balcony_canopy_probability: default_balcony_canopy_probability(),
             balcony_width: 1.6,
             balcony_depth: 1.0,
             balcony_railing_height: 0.95,
             balcony_floor_level: 0.7,
             dormer_probability: 0.5,
-            dormer_width: 1.0,
-            dormer_depth: 0.9,
-            dormer_height: 1.1,
+            dormer_width: 2.4,
+            dormer_depth: 1.8,
+            dormer_height: 1.7,
             chimney_probability: 0.6,
             point_step: 0.25,
             wall_point_step: 0.38,
@@ -183,3 +215,6 @@ impl Default for BuildingConfig {
         }
     }
 }
+
+fn default_door_canopy_probability() -> f32 { 0.55 }
+fn default_balcony_canopy_probability() -> f32 { 0.6 }

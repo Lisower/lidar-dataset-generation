@@ -34,6 +34,7 @@ fn preset_rng(preset: PlantPreset, seed: Seed) -> StdRng {
 pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
     let mut cfg = match preset {
         PlantPreset::DeciduousTree => deciduous_tree(),
+        PlantPreset::Spruce => spruce(),
         PlantPreset::Bush => bush(),
         PlantPreset::TallGrass => tall_grass(),
         PlantPreset::SparseGrass => sparse_grass(),
@@ -200,10 +201,19 @@ fn deciduous_tree() -> PlantConfig {
         ));
     }
 
-    // Уровни 5..9 — тонкие побеги, образуют «ажур» кроны.
-    for level in 5..10 {
+    // Средние ветви кроны — сохраняем густоту.
+    for level in 5..7 {
         branches.push(branching_level(
-            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97), (-5.0, 20.0), 12.5, 32.5, (2, 3), 4,
+            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97),
+            (-5.0, 20.0), 12.5, 32.5, (2, 3), 4,
+        ));
+    }
+
+    // Мелкие верхние ветви — уменьшаем лишнее ветвление.
+    for level in 7..10 {
+        branches.push(branching_level(
+            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97),
+            (-10.0, 10.0), 12.5, 32.5, (2, 3), 4,
         ));
     }
 
@@ -242,6 +252,129 @@ fn deciduous_tree() -> PlantConfig {
     }
 }
 
+/// Ель: высокий прямой ствол и коническая крона.
+///
+/// Нижние ветви длинные и почти горизонтальные.
+/// По мере приближения к вершине ветви становятся короче
+/// и сильнее направляются вверх.
+fn spruce() -> PlantConfig {
+    let mut branches: BranchLevels = Vec::new();
+
+    // Уровень 0 — высокий прямой ствол.
+    branches.push(vec![sector_branch(
+        0,
+        0,
+        180.0,
+        180.0,
+        0.0,
+        2.0,
+        (4.0, 5.0),
+        (0.35, 0.5),
+        (0.82, 0.88),
+        (6, 8),
+        0,
+        12,
+    )]);
+
+    // Уровень 1 — нижний ярус кроны.
+    // Самые длинные ветви, расположенные почти горизонтально.
+    branches.push(radial_level(
+        1,
+        8,
+        8.0,
+        70.0,
+        8.0,
+        (2.5, 3.2),
+        (0.18, 0.24),
+        (0.75, 0.85),
+        (2, 3),
+        0,
+        8,
+    ));
+
+    // Уровень 2 — средняя часть кроны.
+    branches.push(branching_level(
+        2,
+        (0.65, 0.8),
+        (0.65, 0.8),
+        (0.75, 0.85),
+        (5.0, 20.0),
+        12.0,
+        35.0,
+        (2, 3),
+        6,
+    ));
+
+    // Уровень 3 — ветви становятся короче.
+    branches.push(branching_level(
+        3,
+        (0.55, 0.7),
+        (0.6, 0.75),
+        (0.75, 0.85),
+        (5.0, 18.0),
+        10.0,
+        30.0,
+        (2, 3),
+        5,
+    ));
+
+    // Уровень 4 — мелкие веточки.
+    branches.push(branching_level(
+        4,
+        (0.45, 0.6),
+        (0.55, 0.7),
+        (0.7, 0.82),
+        (0.0, 15.0),
+        10.0,
+        25.0,
+        (2, 3),
+        4,
+    ));
+
+    // Уровень 5 — кончики хвойных ветвей.
+    branches.push(branching_level(
+        5,
+        (0.35, 0.5),
+        (0.5, 0.65),
+        (0.7, 0.8),
+        (-5.0, 12.0),
+        8.0,
+        20.0,
+        (1, 2),
+        4,
+    ));
+
+    PlantConfig {
+        seed: Seed::default(),
+        preset: PlantPreset::Spruce,
+        plant_type: PlantType::Tree,
+        branches,
+        branch_color: BARK_TREE,
+        max_branches: 80_000,
+
+        foliage: FoliageConfig {
+            style: FoliageStyle::Leafy,
+            placement: FoliagePlacement::Terminal { min_level: 2 },
+            color: FOLIAGE_GREEN_DARK,
+            length: 0.12,
+            width: 0.025,
+            per_anchor: 5,
+            anchors: 2,
+            pitch_jitter: 35.0,
+            cloud_points: 1,
+        },
+
+        grass: grass_default(),
+
+        point_step: 0.15,
+        jitter: 0.015,
+
+        spread_radius: 25.0,
+        neighbors_min: 3,
+        neighbors_max: 6,
+    }
+}
+
 /// Куст: много стволиков от земли, листва почти от самой земли.
 ///
 /// Из 8 уровней прототипа: 11 стволиков от земли, дальше по 3 ветки на
@@ -250,22 +383,45 @@ fn deciduous_tree() -> PlantConfig {
 fn bush() -> PlantConfig {
     let mut branches: BranchLevels = Vec::new();
 
-    // Уровень 0 — стволики, расходятся от центра по кругу (вертикаль 5..40°).
+    // Уровень 0 — основные побеги от земли.
     branches.push(radial_level(
-        0, 11, 10.0, 22.5, 17.5, (0.3, 0.4), (0.03, 0.04), (0.97, 0.99), (2, 3), 0, 5,
+        0, 8, 10.0, 22.5, 17.5,
+        (0.3, 0.4),
+        (0.03, 0.04),
+        (0.97, 0.99),
+        (2, 3),
+        0,
+        5,
     ));
 
-    // Уровни 1..3 — внутренние ветки куста, короткие.
+    // Уровни 1..3 — внутренние ветки куста.
     for level in 1..4 {
         branches.push(branching_level(
-            level, (0.6, 0.7), (0.97, 0.99), (0.8, 0.9), (10.0, 15.0), 15.0, 30.0, (2, 3), 4,
+            level,
+            (0.6, 0.7),
+            (0.97, 0.99),
+            (0.8, 0.9),
+            (10.0, 15.0),
+            15.0,
+            30.0,
+            (2, 3),
+            4,
         ));
     }
 
-    // Уровни 4..7 — внешние ветки, длиннее, расширяют куст.
+    // Уровни 4..6 — внешние ветки.
+    // На последних уровнях уменьшаем количество дочерних ветвей.
     for level in 4..7 {
         branches.push(branching_level(
-            level, (0.9, 0.95), (0.97, 0.99), (0.7, 0.75), (5.0, 10.0), 15.0, 30.0, (2, 3), 4,
+            level,
+            (0.9, 0.95),
+            (0.97, 0.99),
+            (0.7, 0.75),
+            (5.0, 10.0),
+            15.0,
+            30.0,
+            (2, 3),
+            4,
         ));
     }
 
