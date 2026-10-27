@@ -172,40 +172,35 @@ pub struct BowlFeature {
     /// Доля «досягаемости» у кромки с пологой подводной отмелью (`0..0.5`) —
     /// берега пологие, вода доходит до самого берега.
     pub shore: f32,
-    /// Ширина внешней ЗАЛИТОЙ полки от кромки до обрыва, м. Полка — мелкая
-    /// вода, поэтому уровень воды доходит прямо до внешнего вертикального
-    /// обрыва (`s == rim`), без сухого «кольца» между водой и берегом.
+    /// Ширина плавного перехода от уреза к окружающей суше, м.
     pub rim: f32,
 }
 
 impl BowlFeature {
-    /// Абсолютная «крышка» высоты: внутри контура — дно чаши, снаружи в пределах
-    /// `rim` — залитая отмель вплоть до внешнего обрыва; дальше — `None`.
+    /// Дно чаши и берег с номинальной высотой `water_level + max_depth`.
     pub fn cap(&self, p: Vec2) -> Option<f32> {
+        self.cap_with_bank(p, self.water_level + self.max_depth)
+    }
+
+    /// Берег сливается с текущим рельефом без скачка на внешней границе.
+    fn cap_with_bank(&self, p: Vec2, terrain: f32) -> Option<f32> {
         let s = self.contour.signed_distance_closed(p); // <0 внутри
         if s > self.rim {
             return None;
         }
-        // Толщина воды на самом краю, у внешнего обрыва, м.
-        const WELL_DEPTH: f32 = 0.18;
         if s >= 0.0 {
-            // Внешняя залитая полка: от кромки (мелко) к обрыву чуть глубже —
-            // вода доходит прямо до вертикального обрыва (`s == rim`), сухого
-            // «кольца» нет.
-            let u = (s / self.rim.max(f32::EPSILON)).clamp(0.0, 1.0);
-            let depth = WELL_DEPTH * (0.5 + u * 0.75);
-            return Some(self.water_level - depth);
+            let blend = smoothstep(0.0, self.rim, s);
+            return Some(self.water_level + (terrain - self.water_level).max(0.0) * blend);
         }
         let inward = -s;
         let u = (inward / self.reach.max(f32::EPSILON)).clamp(0.0, 1.0);
-        // Подводная отмель у кромки: глубина у самого берега не нулевая, поэтому
-        // вода доходит до кромки (нет сухого «кольца»-ступеньки), а берега
-        // остаются пологими.
+        // Отмель начинается с нулевой глубины и постепенно переходит в чашу.
         let shelf = self.shore.clamp(0.0, 0.5);
         let u2 = ((u - shelf) / (1.0 - shelf)).clamp(0.0, 1.0);
         let power = 1.0 - (1.0 - u2).powf(self.bottom.max(0.1));
-        const SHELF_DEPTH: f32 = 0.08; // доля max_depth у самой кромки (вода)
-        let depth_frac = SHELF_DEPTH + (1.0 - SHELF_DEPTH) * power;
+        const SHELF_DEPTH: f32 = 0.08;
+        let depth_frac =
+            SHELF_DEPTH * smoothstep(0.0, shelf.max(0.05), u) + (1.0 - SHELF_DEPTH) * power;
         Some(self.water_level - self.max_depth * depth_frac)
     }
 }
@@ -230,7 +225,7 @@ impl TerrainFeature {
                 Some(cap) => h.min(cap),
                 None => h,
             },
-            Self::Bowl(b) => match b.cap(p) {
+            Self::Bowl(b) => match b.cap_with_bank(p, h) {
                 Some(cap) => h.min(cap),
                 None => h,
             },
@@ -356,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn bowl_shore_is_submerged_not_dry_ring() {
+    fn bowl_shore_meets_water_and_blends_into_land() {
         let contour = Curve::new_closed(vec![
             Vec2::new(-10.0, 0.0),
             Vec2::new(0.0, 6.0),
@@ -382,10 +377,20 @@ mod tests {
         let deep0 = mk(0.0).cap(Vec2::new(0.0, -2.0)).unwrap();
         let deep_s = mk(0.35).cap(Vec2::new(0.0, -2.0)).unwrap();
         assert!(deep_s > deep0, "с отмелью берег положе: {deep_s} > {deep0}");
-        // Вода доходит до самого внешнего обрыва: вся внешняя полка залита.
-        let at_rim = mk(0.3).cap(Vec2::new(-11.9, 0.0)).unwrap(); // s ≈ 1.9 < rim
-        assert!(at_rim < 2.0, "у обрыва должна быть вода: {at_rim}");
-        // За обрывом — влияния чаши нет (там базовый рельеф, суша).
-        assert!(mk(0.3).cap(Vec2::new(-13.0, 0.0)).is_none());
+        let bowl = mk(0.3);
+        let at_shore = bowl.cap(Vec2::new(-10.0, 0.0)).unwrap();
+        assert!((at_shore - bowl.water_level).abs() < 1e-5);
+        let mut previous = at_shore;
+        for i in 1..=20 {
+            let p = Vec2::new(-10.0 - i as f32 * 0.1, 0.0);
+            let height = bowl.cap_with_bank(p, 7.0).unwrap();
+            assert!(height >= previous && height - previous < 0.4);
+            previous = height;
+        }
+        assert!(
+            (previous - 7.0).abs() < 1e-5,
+            "берег должен слиться с сушей"
+        );
+        assert!(bowl.cap(Vec2::new(-13.0, 0.0)).is_none());
     }
 }

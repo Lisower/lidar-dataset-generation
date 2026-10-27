@@ -12,7 +12,7 @@ use generation_core::Seed;
 
 use crate::generation::landscape::generate;
 use crate::generation::preset::resolve;
-use crate::generation::{falls_clear_offset, LandscapePreset};
+use crate::generation::{LandscapePreset, falls_clear_offset};
 
 /// Число узлов сетки при разрешении последнего поля высот.
 fn grid_cells(landscape: &crate::generation::Landscape) -> usize {
@@ -227,4 +227,61 @@ fn waterfall_wall_clears_the_rock() {
         saw_columns >= 100,
         "стены воды слишком мало колонок суммарно: {saw_columns}"
     );
+}
+
+/// Эрозия не запирает нижний бассейн, а меш воды и точки описывают одно падение.
+#[test]
+fn waterfall_surface_stays_connected_and_above_its_bed() {
+    use crate::generation::TerrainFeature;
+    use crate::visual::water_mesh;
+    use bevy::mesh::VertexAttributeValues;
+
+    for seed in 0..12 {
+        let cfg = resolve(LandscapePreset::Waterfalls, Seed::new(seed));
+        let land = generate(&cfg);
+        let hf = &land.heightfield;
+        let TerrainFeature::Channel(channel) = &cfg.features[0] else {
+            panic!("нет русла")
+        };
+        for k in 5..95 {
+            let p = channel.curve.point_at(k as f32 / 100.0);
+            let i = ((p.x + 50.0) / hf.step).round() as usize;
+            let j = ((p.y + 50.0) / hf.step).round() as usize;
+            if i < hf.n && j < hf.n {
+                assert!(
+                    land.water.levels[hf.index(i, j)].is_some(),
+                    "seed {seed}: разрыв на t={k}%"
+                );
+            }
+        }
+        let mesh = water_mesh(hf, &land.water, &land.water_walls).unwrap();
+        let VertexAttributeValues::Float32x3(vertices) = mesh
+            .attribute(bevy::mesh::Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+        else {
+            panic!("нет вершин воды")
+        };
+        let mut falling_faces = 0;
+        for face in vertices.chunks_exact(3) {
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
+            for &[x, y, water] in face {
+                let i = ((x + 50.0) / hf.step).round() as usize;
+                let j = ((y + 50.0) / hf.step).round() as usize;
+                assert!((hf.node_xy(i, j).x - x).abs() < 1e-4);
+                assert!((hf.node_xy(i, j).y - y).abs() < 1e-4);
+                assert_eq!(land.water.levels[hf.index(i, j)], Some(water));
+                assert!(hf.get(i, j) < water, "seed {seed}: вода в скале");
+                lo = lo.min(water);
+                hi = hi.max(water);
+            }
+            if hi - lo > 2.0 {
+                falling_faces += 1;
+            }
+        }
+        assert!(
+            falling_faces > 10,
+            "seed {seed}: поверхность падения пропала"
+        );
+    }
 }
