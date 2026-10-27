@@ -18,7 +18,7 @@ use rand::RngExt;
 
 use super::config::{LandscapeConfig, Longitudinal};
 use super::erosion::erode;
-use super::features::{smoothstep, TerrainFeature};
+use super::features::{TerrainFeature, smoothstep};
 use super::noise::NoiseSampler;
 
 /// Перепад уровня воды между соседними узлами (м), выше которого
@@ -84,9 +84,7 @@ impl Heightfield {
 
     /// Итератор узлов: `(i, j, координата)`.
     pub fn nodes(&self) -> impl Iterator<Item = (usize, usize, Vec2)> + '_ {
-        (0..self.n).flat_map(move |j| {
-            (0..self.n).map(move |i| (i, j, self.node_xy(i, j)))
-        })
+        (0..self.n).flat_map(move |j| (0..self.n).map(move |i| (i, j, self.node_xy(i, j))))
     }
 }
 
@@ -113,8 +111,7 @@ pub struct Landscape {
     pub ground_cloud: PointCloud,
     /// Облако точек воды (поверхности и стенки водопадов).
     pub water_cloud: PointCloud,
-    /// Сплошные вертикальные «занавесы» воды на каскадах (общие для облака
-    /// точек и визуального меша воды).
+    /// Положения и перепады каскадов из продольного профиля русла.
     pub water_walls: Vec<FallsCurtain>,
     /// Минимальная и максимальная высоты рельефа.
     pub min_height: f32,
@@ -186,6 +183,14 @@ pub fn generate(config: &LandscapeConfig) -> Landscape {
     // Делает склоны и русла естественнее, но оставляет структуру (уступы,
     // каньоны, каскады). Вода считается по уже эродированной поверхности.
     erode(&mut heights, n, n, step);
+    // Осадок не должен перекрывать воду у подножия каскада и разрывать русло.
+    for idx in 0..count {
+        if let Some(w) = candidates[idx]
+            && h_structured[idx] < w
+        {
+            heights[idx] = heights[idx].min(h_structured[idx]);
+        }
+    }
 
     // --- 3. вода: где поверхность ниже уровня воды ---
     let mut water_levels = vec![None; count];
@@ -213,10 +218,7 @@ pub fn generate(config: &LandscapeConfig) -> Landscape {
     // Стенки водопадов/порогов: между соседними узлами с резким перепадом
     // уровня воды добавляется вертикальный «столбик» точек.
     add_waterfall_walls(&mut water, &water_levels, n, n, step);
-    // Гарантированные сплошные «занавесы» на вертикальных обрывах профиля
-    // русла (водопады/каскады) — поперёк всей ширины дна.
     let falls_walls = channel_falls_curtains(config);
-    add_channel_falls_walls(&mut water, &falls_walls, &heights, n, step, size_m);
 
     // Вертикальные/почти вертикальные грани рельефа (уступы, обрывы каньона):
     // точечные узлы на горизонтальной сетке там «размазываются» в полосы.
@@ -273,15 +275,15 @@ fn add_waterfall_walls(
     for j in 0..m {
         for i in 0..n {
             let idx = j * n + i;
-            let (w1, p1) = match levels[idx] {
-                Some(w) if i + 1 < n => (w, Vec3::new(x_at(i), y_at(j), w)),
-                _ => continue,
-            };
+            let Some(w1) = levels[idx] else { continue };
+            let p1 = Vec3::new(x_at(i), y_at(j), w1);
             // Правое ребро.
-            let ni = i + 1;
-            let nidx = j * n + ni;
-            if let Some(w2) = levels[nidx] {
-                if (w2 - w1).abs() > WATERFALL_JUMP {
+            if i + 1 < n {
+                let ni = i + 1;
+                let nidx = j * n + ni;
+                if let Some(w2) = levels[nidx]
+                    && (w2 - w1).abs() > WATERFALL_JUMP
+                {
                     let p2 = Vec3::new(x_at(ni), y_at(j), w2);
                     add_vertical_points(cloud, p1, p2, step);
                 }
@@ -339,10 +341,8 @@ pub struct FallsCurtain {
     pub hi: f32,
 }
 
-/// Все вертикальные обрывы воды (водопады/каскады) в конфигурации как
-/// сплошные «занавесы» поперёк русла. Используется и облаком точек, и мешем
-/// воды — чтобы вертикальная стена воды была и в облаке, и в визуальной
-/// модели.
+/// Метаданные перепадов воды вдоль русла. Поверхность каскада в меше и
+/// облаке точек строится по общей сетке поля воды.
 pub fn channel_falls_curtains(config: &LandscapeConfig) -> Vec<FallsCurtain> {
     let mut out = Vec::new();
     for feature in &config.features {
@@ -430,39 +430,6 @@ where
         off += 1.0;
     }
     required
-}
-
-/// Добавить «занавесы» каскадов в облако воды: одиночный вертикальный занавес
-/// поперёк русла, выдвинутый по потоку настолько ([`falls_clear_offset`]),
-/// чтобы его низ (`lo`) не оказывался за грунтом. Для каждой колонки поперёк
-/// русла, под которой дно ушло ниже `lo`, — вертикальный столбик точек от
-/// `lo` до `hi` с шагом `step`.
-fn add_channel_falls_walls(
-    cloud: &mut PointCloud,
-    curtains: &[FallsCurtain],
-    heights: &[f32],
-    n: usize,
-    step: f32,
-    size_m: f32,
-) {
-    if curtains.is_empty() {
-        return;
-    }
-    let terrain = |x: f32, y: f32| sample_height(heights, n, step, size_m, x, y);
-    for c in curtains {
-        let s_clear = falls_clear_offset(c, &terrain);
-        let mut off = -c.hw;
-        while off <= c.hw + 1e-3 {
-            let xy = c.p + c.n * off + c.flow * s_clear;
-            // Колонка участвует, только если дно под ней уже ушло ниже lo.
-            if terrain(xy.x, xy.y) < c.lo - 0.2 {
-                let low = Vec3::new(xy.x, xy.y, c.lo);
-                let high = Vec3::new(xy.x, xy.y, c.hi);
-                add_vertical_points(cloud, low, high, step);
-            }
-            off += step;
-        }
-    }
 }
 
 /// Уплотнение облака грунта на крутых гранях рельефа.
@@ -573,6 +540,13 @@ mod tests {
     use crate::generation::preset::{LandscapePreset, resolve};
 
     #[test]
+    fn waterfall_points_cover_the_last_grid_column() {
+        let mut cloud = PointCloud::new(PointClass::Water);
+        add_waterfall_walls(&mut cloud, &[Some(2.0), Some(2.0), Some(0.0), Some(0.0)], 2, 2, 0.5);
+        assert!(cloud.points.iter().any(|p| p.position.x == 0.25 && p.position.z > 0.0 && p.position.z < 2.0));
+    }
+
+    #[test]
     fn deterministic_generation() {
         for preset in LandscapePreset::ALL {
             for seed in 0..2u64 {
@@ -672,59 +646,42 @@ mod tests {
     }
 
     #[test]
-    fn pond_water_reaches_shore() {
-        // Отмель у кромки должна быть залита водой: у пруда есть «мелкие»
-        // мокрые узлы (дно неглубоко под урезом) — вода доходит до берега,
-        // а не оставляет сухое «кольцо»-ступеньку.
-        for seed in 0..8u64 {
+    fn large_pond_has_shallows_and_no_shore_cliff() {
+        for seed in 0..8 {
             let land = generate(&resolve(LandscapePreset::Pond, Seed::new(seed)));
-            if !land.has_water {
-                continue;
-            }
-            let n = land.heightfield.n;
-            let hf = &land.heightfield.values;
-            let mut shallow_wet = 0usize;
-            let mut water_vs_cliff = 0usize;
-            for (idx, w) in land.water.levels.iter().enumerate() {
-                if let Some(w) = w {
-                    let h = hf[idx];
-                    // Мелкая прибрежная зона: дно глубже уреза не более чем на
-                    // ~0.45 м (подводная отмель + плавный вход в воду).
-                    if w - h < 0.45 {
-                        shallow_wet += 1;
-                    }
-                    // Вода доходит до самой внешней кромки: рядом есть сухой
-                    // узел, заметно (на ~0.5 м и более) выше этого уровня воды —
-                    // это внешний обрыв, к которому примыкает вода.
-                    let i = idx % n;
-                    let j = idx / n;
-                    let mut cliff = false;
-                    for (ni, nj) in [
-                        (i + 1, j),
-                        (i.wrapping_sub(1), j),
-                        (i, j + 1),
-                        (i, j.wrapping_sub(1)),
-                    ] {
-                        if ni < n && nj < n {
-                            let nidx = nj * n + ni;
-                            if land.water.levels[nidx].is_none() && hf[nidx] > w + 0.5 {
-                                cliff = true;
-                                break;
-                            }
+            let hf = &land.heightfield;
+            let area = land.water.levels.iter().flatten().count() as f32 * hf.step.powi(2);
+            assert!(
+                area > 1500.0 && area < 5000.0,
+                "seed {seed}: площадь {area}"
+            );
+            let mut shallow = 0;
+            let mut shore_edges = 0;
+            for (idx, water) in land.water.levels.iter().enumerate() {
+                let Some(w) = water else { continue };
+                if w - hf.values[idx] < 0.45 {
+                    shallow += 1;
+                }
+                let i = idx % hf.n;
+                let j = idx / hf.n;
+                for (ni, nj) in [
+                    (i + 1, j),
+                    (i.wrapping_sub(1), j),
+                    (i, j + 1),
+                    (i, j.wrapping_sub(1)),
+                ] {
+                    if ni < hf.n && nj < hf.n {
+                        let next = hf.index(ni, nj);
+                        if land.water.levels[next].is_none() {
+                            shore_edges += 1;
+                            assert!(hf.values[next] - w < 0.3, "seed {seed}: обрыв у берега");
                         }
-                    }
-                    if cliff {
-                        water_vs_cliff += 1;
                     }
                 }
             }
             assert!(
-                shallow_wet > 40,
-                "у пруда должна быть залитая отмель (мелководье): {shallow_wet}"
-            );
-            assert!(
-                water_vs_cliff > 10,
-                "вода пруда должна доходить до внешнего обрыва: {water_vs_cliff}"
+                shallow > 40 && shore_edges > 100,
+                "seed {seed}: нет пологого берега"
             );
         }
     }

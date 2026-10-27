@@ -20,11 +20,11 @@
 use bevy::ecs::resource::Resource;
 use bevy::math::Vec2;
 use generation_core::Seed;
-use rand::rngs::StdRng;
 use rand::RngExt;
+use rand::rngs::StdRng;
 
 use super::config::{BasePlane, LandscapeConfig, Longitudinal, TerrainNoise};
-use super::curve::{warped_contour, winding_path, Curve};
+use super::curve::{Curve, warped_contour, winding_path};
 use super::features::{BowlFeature, ChannelFeature, StepFeature, TerrainFeature};
 use super::profile::Profile;
 
@@ -54,11 +54,13 @@ pub enum LandscapePreset {
     SlopingRiver,
     /// Водопады: один или несколько каскадов вдоль русла.
     Waterfalls,
+    /// Холмистая местность: несколько широких извилистых гряд.
+    Hills,
 }
 
 impl LandscapePreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Plain,
         Self::Slope,
         Self::PlainSlope,
@@ -70,6 +72,7 @@ impl LandscapePreset {
         Self::Shore,
         Self::SlopingRiver,
         Self::Waterfalls,
+        Self::Hills,
     ];
 
     /// Название для панели информации.
@@ -86,6 +89,7 @@ impl LandscapePreset {
             Self::Shore => "берег реки/озера",
             Self::SlopingRiver => "наклонная река",
             Self::Waterfalls => "водопады",
+            Self::Hills => "холмы",
         }
     }
 
@@ -102,15 +106,24 @@ impl LandscapePreset {
         match name.to_ascii_lowercase().as_str() {
             "plain" | "равнина" | "ровнина" => Some(Self::Plain),
             "slope" | "склон" => Some(Self::Slope),
-            "plainslope" | "равнина-склон" | "равнина_склон" => Some(Self::PlainSlope),
-            "multilevel" | "разноуровневая" | "террасы" | "терраса" => Some(Self::MultiLevel),
+            "plainslope" | "равнина-склон" | "равнина_склон" => {
+                Some(Self::PlainSlope)
+            }
+            "multilevel" | "разноуровневая" | "террасы" | "терраса" => {
+                Some(Self::MultiLevel)
+            }
             "canyon" | "уступ каньона" | "уступ" => Some(Self::CanyonLedge),
             "gorge" | "ущелье" | "каньон" => Some(Self::Gorge),
             "river" | "речка" | "река" => Some(Self::River),
             "pond" | "пруд" | "озеро" => Some(Self::Pond),
             "shore" | "берег" => Some(Self::Shore),
-            "slopingriver" | "наклонная река" | "горная река" => Some(Self::SlopingRiver),
-            "waterfall" | "waterfalls" | "водопад" | "водопады" => Some(Self::Waterfalls),
+            "slopingriver" | "наклонная река" | "горная река" => {
+                Some(Self::SlopingRiver)
+            }
+            "waterfall" | "waterfalls" | "водопад" | "водопады" => {
+                Some(Self::Waterfalls)
+            }
+            "hills" | "холмы" => Some(Self::Hills),
             _ => None,
         }
     }
@@ -130,6 +143,7 @@ pub fn resolve(preset: LandscapePreset, seed: Seed) -> LandscapeConfig {
         LandscapePreset::Shore => shore(seed),
         LandscapePreset::SlopingRiver => sloping_river(seed),
         LandscapePreset::Waterfalls => waterfalls(seed),
+        LandscapePreset::Hills => hills(seed),
     };
     cfg.seed = seed;
     cfg.label = preset.label();
@@ -162,7 +176,7 @@ fn rocky(preset: LandscapePreset, seed: Seed, amp: (f32, f32), freq: (f32, f32))
 
 /// Случайная точка на грани карты (любое направление входа/выхода линии).
 fn edge_point(rng: &mut StdRng) -> Vec2 {
-    let half = 48.0;
+    let half = 60.0;
     match rng.random_range(0usize..4) {
         0 => Vec2::new(rng.random_range(-half..half), half),
         1 => Vec2::new(rng.random_range(-half..half), -half),
@@ -177,7 +191,7 @@ fn random_span(rng: &mut StdRng, min_span: f32) -> (Vec2, Vec2) {
     loop {
         let a = edge_point(rng);
         let b = edge_point(rng);
-        if a.distance(b) >= min_span {
+        if a.distance(b) >= min_span && ((a + b) * 0.5).abs().max_element() < 25.0 {
             return (a, b);
         }
     }
@@ -187,12 +201,13 @@ fn random_span(rng: &mut StdRng, min_span: f32) -> (Vec2, Vec2) {
 /// за картой, кривизна ограничена `amplitude` (террасы, уступы, берега).
 fn seam_through(center: Vec2, angle: f32, amplitude: f32, seed: Seed) -> Curve {
     let d = Vec2::new(angle.cos(), angle.sin());
-    let extent = 500.0;
+    // Изгибы должны помещаться на карте 100×100 м, а концы — оставаться снаружи.
+    let extent = 85.0;
     winding_path(
         center - d * extent,
         center + d * extent,
         amplitude.max(0.0),
-        2,
+        4,
         24,
         seed,
     )
@@ -251,7 +266,7 @@ fn plain_slope(seed: Seed) -> LandscapeConfig {
         curve: seam_through(
             Vec2::new(0.0, y0),
             angle,
-            range(&mut rng, 1.0, 2.5),
+            range(&mut rng, 8.0, 14.0),
             seed.with_label("равнина-склон-линия"),
         ),
         profile: Profile::plain_to_slope(slope, band),
@@ -284,7 +299,7 @@ fn multi_level(seed: Seed) -> LandscapeConfig {
         let drop = dir * range(&mut rng, 3.0, 6.0);
         let width = range(&mut rng, 3.0, 10.0);
         let angle = range(&mut rng, -0.6, 0.6);
-        let amp = range(&mut rng, 1.5, 3.5);
+        let amp = range(&mut rng, 7.0, 13.0);
         features.push(TerrainFeature::Step(StepFeature {
             curve: seam_through(
                 Vec2::new(0.0, off),
@@ -315,8 +330,8 @@ fn canyon_ledge(seed: Seed) -> LandscapeConfig {
         curve: winding_path(
             start,
             end,
-            range(&mut rng, 1.5, 3.5),
-            rng.random_range(2usize..=4),
+            range(&mut rng, 9.0, 16.0),
+            rng.random_range(3usize..=4),
             24,
             seed.with_label("уступ-ось"),
         ),
@@ -349,8 +364,8 @@ fn gorge(seed: Seed) -> LandscapeConfig {
         curve: winding_path(
             start,
             end,
-            range(&mut rng, 4.0, 8.0),
-            rng.random_range(3usize..=5),
+            range(&mut rng, 9.0, 14.0),
+            rng.random_range(3usize..=4),
             24,
             seed.with_label("ущелье-ось"),
         ),
@@ -380,19 +395,19 @@ fn river(seed: Seed) -> LandscapeConfig {
     let base_h = range(&mut rng, 4.2, 5.8);
     // Вода держится заметно ниже поймы, чтобы берега были невысокими.
     let water = range(&mut rng, 2.4, 3.6).min(base_h - 0.5);
-    let half_width = range(&mut rng, 3.0, 5.0);
-    let width_spread = range(&mut rng, 1.5, 2.5);
+    let half_width = range(&mut rng, 6.0, 8.5);
+    let width_spread = range(&mut rng, 1.0, 2.0);
     let channel = TerrainFeature::Channel(ChannelFeature {
         curve: winding_path(
             start,
             end,
-            range(&mut rng, 6.0, 10.0),
-            rng.random_range(3usize..=5),
+            range(&mut rng, 11.0, 17.0),
+            rng.random_range(3usize..=4),
             24,
             seed.with_label("речка-ось"),
         ),
         half_width,
-        width_nodes: width_nodes(&mut rng, half_width, width_spread, 1.5),
+        width_nodes: width_nodes(&mut rng, half_width, width_spread, 4.0),
         bank: range(&mut rng, 7.0, 11.0),
         bank_top: base_h + range(&mut rng, 1.5, 3.0),
         depth: range(&mut rng, 1.4, 2.0),
@@ -413,32 +428,29 @@ fn river(seed: Seed) -> LandscapeConfig {
 /// до самой кромки (подводная отмель, без сухих «колец»-ступенек).
 fn pond(seed: Seed) -> LandscapeConfig {
     let mut rng = rng_for(LandscapePreset::Pond, seed);
-    let center = Vec2::new(range(&mut rng, -16.0, 16.0), range(&mut rng, -16.0, 16.0));
-    let rx = range(&mut rng, 12.0, 18.0);
-    let ry = range(&mut rng, 15.0, 24.0);
+    let center = Vec2::new(range(&mut rng, -6.0, 6.0), range(&mut rng, -6.0, 6.0));
+    let rx = range(&mut rng, 23.0, 29.0);
+    let ry = range(&mut rng, 27.0, 34.0);
     let contour_pts = warped_contour(
         center,
         rx,
         ry,
-        0.14,
-        96,
+        range(&mut rng, 0.32, 0.48),
+        128,
         seed.with_label("пруд-контур"),
     );
     let contour = Curve::new_closed(contour_pts);
-    // Окружающая суша заметно выше уровня воды — у самой кромки всегда есть
-    // заметный вертикальный обрыв (запас больше амплитуды шума, поэтому шум
-    // не «съедает» стенку даже в минимумах).
+    // Внешняя береговая полоса плавно соединяет урез с окружающей сушей.
     let base_h = range(&mut rng, 6.0, 7.2);
     let water = range(&mut rng, 3.2, 4.2).min(base_h - 1.0);
     let bowl = TerrainFeature::Bowl(BowlFeature {
         contour,
-        reach: rx.max(ry) * 1.2,
+        reach: rx.min(ry) * 0.7,
         water_level: water,
         max_depth: range(&mut rng, 2.4, 3.4),
         bottom: range(&mut rng, 2.2, 3.2),
         shore: range(&mut rng, 0.15, 0.28),
-        // Ширина залитой полки до внешнего обрыва, м.
-        rim: range(&mut rng, 3.5, 6.5),
+        rim: range(&mut rng, 8.0, 13.0),
     });
 
     LandscapeConfig {
@@ -518,20 +530,20 @@ fn sloping_river(seed: Seed) -> LandscapeConfig {
     };
     let start_w = base.height(start) - range(&mut rng, 1.0, 2.0);
     let end_w = base.height(end) - range(&mut rng, 1.0, 2.0);
-    let half_width = range(&mut rng, 3.0, 5.0);
-    let width_spread = range(&mut rng, 1.5, 2.5);
+    let half_width = range(&mut rng, 5.5, 8.0);
+    let width_spread = range(&mut rng, 1.0, 1.5);
 
     let channel = TerrainFeature::Channel(ChannelFeature {
         curve: winding_path(
             start,
             end,
-            range(&mut rng, 5.0, 8.0),
-            rng.random_range(3usize..=5),
+            range(&mut rng, 9.0, 14.0),
+            rng.random_range(3usize..=4),
             24,
             seed.with_label("наклонная-ось"),
         ),
         half_width,
-        width_nodes: width_nodes(&mut rng, half_width, width_spread, 1.5),
+        width_nodes: width_nodes(&mut rng, half_width, width_spread, 4.0),
         // Берега — сама наклонная равнина, отдельный пандус не нужен.
         bank: 0.0,
         bank_top: 0.0,
@@ -582,13 +594,13 @@ fn waterfalls(seed: Seed) -> LandscapeConfig {
         nodes.push(Vec2::new(1.00, w_top - 1.0 - drop1 - 1.5));
     }
 
-    let half_width = range(&mut rng, 5.0, 7.0);
+    let half_width = range(&mut rng, 6.5, 9.0);
     let channel = TerrainFeature::Channel(ChannelFeature {
         curve: winding_path(
             start,
             end,
-            range(&mut rng, 3.0, 5.0),
-            rng.random_range(2usize..=4),
+            range(&mut rng, 7.0, 11.0),
+            rng.random_range(2usize..=3),
             24,
             seed.with_label("водопад-ось"),
         ),
@@ -608,6 +620,31 @@ fn waterfalls(seed: Seed) -> LandscapeConfig {
         base: BasePlane::flat(base_h),
         features: vec![channel],
         noise: rocky(LandscapePreset::Waterfalls, seed, (0.5, 1.2), (0.07, 0.14)),
+        ..default_config()
+    }
+}
+
+/// Несколько широких гряд разной высоты, направления и кривизны.
+fn hills(seed: Seed) -> LandscapeConfig {
+    let mut rng = rng_for(LandscapePreset::Hills, seed);
+    let count = rng.random_range(2..=3);
+    let mut features = Vec::with_capacity(count);
+    for k in 0..count {
+        features.push(TerrainFeature::Step(StepFeature {
+            curve: seam_through(
+                Vec2::new(range(&mut rng, -28.0, 28.0), range(&mut rng, -28.0, 28.0)),
+                range(&mut rng, 0.0, std::f32::consts::PI),
+                range(&mut rng, 9.0, 16.0),
+                seed.with_label("холм-гребень").child(k as u64),
+            ),
+            profile: Profile::dip(-range(&mut rng, 5.0, 12.0), range(&mut rng, 35.0, 60.0)),
+        }));
+    }
+    LandscapeConfig {
+        seed,
+        base: BasePlane::flat(range(&mut rng, 2.0, 5.0)),
+        features,
+        noise: rocky(LandscapePreset::Hills, seed, (0.4, 0.9), (0.04, 0.08)),
         ..default_config()
     }
 }
@@ -724,5 +761,63 @@ mod tests {
         }
         assert!(wet, "ущелье должно уметь быть с водой");
         assert!(dry, "ущелье должно уметь быть сухим");
+    }
+
+    #[test]
+    fn terrace_bends_are_visible_inside_the_map() {
+        for seed in 0..24 {
+            let curve = seam_through(Vec2::ZERO, 0.0, 10.0, Seed::new(seed));
+            let inside: Vec<_> = curve.points.iter().filter(|p| p.x.abs() < 45.0).collect();
+            let chord =
+                super::super::curve::straight(**inside.first().unwrap(), **inside.last().unwrap());
+            let bend = inside
+                .iter()
+                .map(|p| chord.nearest(**p).distance)
+                .fold(0.0, f32::max);
+            assert!(bend > 3.0, "seed {seed}: почти прямая терраса ({bend})");
+        }
+    }
+
+    #[test]
+    fn rivers_keep_wide_channels_and_reach_map_edges() {
+        for preset in [
+            LandscapePreset::River,
+            LandscapePreset::SlopingRiver,
+            LandscapePreset::Waterfalls,
+        ] {
+            for seed in 0..24 {
+                let cfg = resolve(preset, Seed::new(seed));
+                let TerrainFeature::Channel(channel) = &cfg.features[0] else {
+                    panic!("нет русла")
+                };
+                for i in 0..=100 {
+                    assert!(
+                        channel.width_at(i as f32 / 100.0) >= 4.0,
+                        "{preset:?}, seed {seed}"
+                    );
+                }
+                for t in [0.42, 0.62] {
+                    let p = channel.curve.point_at(t);
+                    assert!(p.abs().max_element() < 50.0, "{preset:?}, seed {seed}: каскад вне карты");
+                }
+                for p in [
+                    channel.curve.points[0],
+                    *channel.curve.points.last().unwrap(),
+                ] {
+                    assert!(p.x.abs().max(p.y.abs()) >= 50.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hills_are_in_the_preset_cycle_and_parser() {
+        assert_eq!(
+            LandscapePreset::from_name("hills"),
+            Some(LandscapePreset::Hills)
+        );
+        assert_eq!(LandscapePreset::Hills.next(), LandscapePreset::Plain);
+        assert_eq!(LandscapePreset::Waterfalls.next(), LandscapePreset::Hills);
+        assert!(resolve(LandscapePreset::Hills, Seed::new(3)).features.len() >= 2);
     }
 }
