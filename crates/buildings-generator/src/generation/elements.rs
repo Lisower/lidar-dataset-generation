@@ -13,7 +13,7 @@ use generation_core::point_clouds::primitives::{GridNoise, apply_noise, polygon_
 
 use super::config::BuildingConfig;
 use super::palette::{BALCONY_RAILING, BALCONY_SLAB, FRAME};
-use super::part::Part;
+use super::part::{Part, outer_face_polygon};
 
 /// Стена здания (фасад) по стороне света.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,28 +156,6 @@ fn inside_cutout(ctx: &WallCtx, p: Vec3, cutouts: &[FaceCutout]) -> bool {
     cutouts.iter().any(|c| {
         along >= c.along_min && along <= c.along_max && p.z >= c.z_min && p.z <= c.z_max
     })
-}
-
-/// Полигон внешней грани параллелепипеда (для облака точек).
-fn outer_face_polygon(size: Vec3, outward: Vec3) -> generation_core::geometry::Polygon {
-    let outward = outward.normalize();
-    // Ось «вдоль» перпендикулярна outward (выбираем оси X или Y).
-    let along = if outward.x.abs() < 0.9 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
-    let up = outward.cross(along).normalize();
-    let h_along = along.x * size.x + along.y * size.y + along.z * size.z;
-    let h_up = up.x * size.x + up.y * size.y + up.z * size.z;
-    let h_out = outward.x * size.x + outward.y * size.y + outward.z * size.z;
-
-    let center = outward * (h_out * 0.5);
-    let c1 = center + along * (h_along * 0.5) + up * (h_up * 0.5);
-    let c2 = center - along * (h_along * 0.5) + up * (h_up * 0.5);
-    let c3 = center - along * (h_along * 0.5) - up * (h_up * 0.5);
-    let c4 = center + along * (h_along * 0.5) - up * (h_up * 0.5);
-    generation_core::geometry::Polygon::quad(c1, c2, c3, c4).oriented(outward)
 }
 
 /// Окно как группа: рама + стекло.

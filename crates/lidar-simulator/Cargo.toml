@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy-utils = { path = "../bevy-utils" }
+generation-core = { path = "../generation-core" }
+buildings-generator = { path = "../buildings-generator" }
 bevy.workspace = true
 rand.workspace = true
