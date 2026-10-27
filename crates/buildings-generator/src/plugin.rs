@@ -23,7 +23,7 @@ use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_me
 use generation_core::seeds::GlobalSeed;
 use generation_core::{PointClass, PointCloud, Seed, ViewMode};
 
-use crate::generation::{Building, BuildingConfig};
+use crate::generation::{Building, BuildingConfig, BuildingPreset};
 use crate::visual::{PointCloudEntity, VisualMesh, spawn_building};
 
 /// Подсказка об управлении.
@@ -81,11 +81,16 @@ fn regenerate(
     mut global_seed: ResMut<GlobalSeed>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    config: Res<BuildingConfig>,
+    mut config: ResMut<BuildingConfig>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<BuildingState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
-    let mut regenerate = false;
+    let mut regenerate = keys.just_pressed(KeyCode::KeyP);
+    if regenerate {
+        let index = BuildingPreset::ALL.iter().position(|p| *p == config.preset).unwrap_or(0);
+        config.preset = BuildingPreset::ALL[(index + 1) % BuildingPreset::ALL.len()];
+    }
     for request in requests.read() {
         if !request.same_seed {
             global_seed.regenerate();
@@ -240,7 +245,7 @@ fn regenerate_building(
     if let Some(orbit) = orbit {
         // Здание стоит вертикально вдоль мирового Y.
         orbit.focus = Vec3::new(0.0, building.total_height() * 0.45, 0.0);
-        orbit.radius = (building.footprint_diagonal() * 1.7).clamp(8.0, 400.0);
+        orbit.radius = (building.footprint_diagonal().max(building.total_height()) * 1.7).clamp(8.0, 400.0);
         orbit.pitch = 0.55;
     }
 
@@ -268,6 +273,7 @@ fn update_info(
     };
 
     let mut lines = Vec::new();
+    lines.push(format!("Preset: {} [P]", building.config.preset.label()));
     lines.push(format!("Здание · seed {}", building.seed));
     lines.push(format!(
         "Размеры {:.1} × {:.1} м · {} · высота стен {:.1} м",

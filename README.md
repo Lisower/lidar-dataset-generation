@@ -1,31 +1,28 @@
-# LiDAR Dataset Generation
+# lidar-dataset-generator
+## Building presets
 
-Процедурные генераторы на Rust и Bevy 0.20: ландшафты, здания и растения.
-Для каждого объекта строятся 3D-модель и облако точек с классами поверхности.
-Общий генератор территорий, LiDAR-симулятор и dataset runner пока являются заглушками.
+```powershell
+cargo run -p buildings-generator
+cargo run -p buildings-generator -- --preset l-shaped
+cargo run -p buildings-generator -- --preset annex
+```
 
-## Ландшафты
+Press `P` to cycle Rectangular / L-shaped / House with annex. `R` generates
+another building within the selected preset; `Shift+R` repeats the same seed.
+Compound presets use flat roofs: L-shaped wings have equal heights, while the
+annex is lower than the main volume. Shared walls are excluded from the point
+cloud. The occupancy bounds cover the complete footprint.
 
-`landscapes-generator` создаёт участок **100 × 100 м** с шагом сетки **0,5 м**.
-Один seed (начальное число генерации) воспроизводит тот же результат в этой версии.
-После изменения алгоритма прежний seed даёт новый рельеф.
+```powershell
+cargo test -p buildings-generator --lib
+```
 
-12 пресетов: равнина, склон, равнина–склон, террасы, уступ каньона, ущелье,
-река, пруд, берег, горная река, водопады и холмы.
-Линии уступов изгибаются в масштабе карты; реки имеют переменную ширину
-и более заметные меандры. Пруды крупнее, с замкнутой неровной береговой линией,
-отмелью и плавным выходом на сушу. Эрозия не перекрывает русло у водопадов;
-падение воды строится общей сеткой без отдельной смещённой стенки.
+Tall-building presets (also available with `P`):
 
-Это процедурная модель: течения и физической симуляции воды нет.
-Поле высот хранит одну высоту на координату: нависающие скалы невозможны,
-а резкое падение занимает одну ячейку. Подводный грунт отсутствует в облаке точек.
+```powershell
+cargo run -p buildings-generator -- --preset apartment
+cargo run -p buildings-generator -- --preset skyscraper
+```
 
-## Документация
-
-[Установка, запуск и управление на Linux](wiki/Запуск.md).
-
-## Структура
-
-Генерация находится в `crates/landscapes-generator/src/generation/`,
-построение мешей — в `src/visual/`, окно и управление пресетами — в `src/plugin.rs`.
+Apartment blocks have 6?16 floors; skyscrapers have 32?60 floors, larger windows
+and no balconies. Both use flat roofs with parapets and aligned window rows.

@@ -6,7 +6,8 @@
 //! чтобы её низ совпадал с низом этажа (см. `wall_part`).
 
 use bevy::color::Color;
-use bevy::math::Vec3;
+use bevy::math::{Vec3, Quat};
+use rand::RngExt;
 use bevy::transform::components::Transform;
 use generation_core::point_clouds::primitives::{GridNoise, apply_noise, polygon_points};
 
@@ -283,6 +284,7 @@ pub fn balcony_part(
     floor_height: f32,
     door_color: Color,
     balcony_color: Color,
+    with_canopy: bool,
     config: &BuildingConfig,
 ) -> Part {
     let along_x = ctx.facade.along() == Vec3::X;
@@ -308,7 +310,7 @@ pub fn balcony_part(
 
     // Дверь из комнаты на балкон — на стене, вход на уровне плиты.
     // Высота двери не выше этажа; верх — у потолка этажа.
-    let door_height = (floor_height - config.balcony_floor_level).clamp(1.4, config.door_height);
+    let door_height = (floor_height - config.balcony_floor_level - config.roof_thickness - 0.5).clamp(1.4, config.door_height);
     let door = door_part(
         ctx,
         config.balcony_floor_level - floor_height * 0.5 + door_height * 0.5,
@@ -326,6 +328,13 @@ pub fn balcony_part(
         Transform::IDENTITY,
     )
     .with_child(door)
+    .children(if with_canopy && canopy_has_clearance(
+        config.balcony_floor_level + door_height + 0.07,
+        floor_height - config.roof_thickness - 0.12,
+        floor_height - config.roof_thickness,
+    ) {
+        vec![canopy_part(ctx, bw + 0.3, bd + 0.2, floor_height * 0.5 - config.roof_thickness - 0.12, balcony_color, config)]
+    } else { vec![] })
     .with_child(Part::boxed_outwards_step(
         "балкон-плита",
         slab_size,
@@ -387,4 +396,108 @@ fn facade_step(config: &BuildingConfig) -> f32 {
     } else {
         config.point_step
     }
+}
+
+/// A thin independent canopy, extending from the facade over an entrance.
+pub fn canopy_part(ctx: &WallCtx, width: f32, depth: f32, z: f32, color: Color, config: &BuildingConfig) -> Part {
+    use generation_core::geometry::Polygon;
+    let outward = ctx.facade.outward();
+    let along = ctx.facade.along();
+    let p = |x:f32,y:f32,lower:f32| along*x + outward*y + Vec3::Z*(0.04-0.08*y/depth-lower);
+    let w = width*0.5;
+    let t = 0.025;
+    let (a,b,c,d) = (p(-w,0.0,0.0),p(w,0.0,0.0),p(w,depth,0.0),p(-w,depth,0.0));
+    let (aa,bb,cc,dd) = (p(-w,0.0,t),p(w,0.0,t),p(w,depth,t),p(-w,depth,t));
+    let faces = vec![
+        Polygon::quad(a,b,c,d).oriented(Vec3::Z),
+        Polygon::quad(aa,dd,cc,bb).oriented(-Vec3::Z),
+        Polygon::quad(b,bb,cc,c).oriented(along),
+        Polygon::quad(a,d,dd,aa).oriented(-along),
+        Polygon::quad(d,c,cc,dd).oriented(outward),
+        Polygon::quad(a,aa,bb,b).oriented(-outward),
+    ];
+    let mut canopy = Part::group("entrance-canopy",color,
+        Transform::from_translation(ctx.outer_point()+Vec3::Z*z));
+    canopy = canopy.child(Part::from_faces("canopy-sheet",faces,color,Transform::IDENTITY,false,config));
+    for side in [-1.0,1.0] {
+        let start = along*(side*width*0.4)-Vec3::Z*0.20;
+        let end = along*(side*width*0.4)+outward*(depth*0.65)-Vec3::Z*0.025;
+        let delta = end-start;
+        canopy = canopy.child(Part::boxed_outwards("canopy-bracket",
+            Vec3::new(0.025,0.025,delta.length()),&[Vec3::X,-Vec3::X,Vec3::Y,-Vec3::Y,Vec3::Z],FRAME,
+            Transform { translation:(start+end)*0.5,rotation:Quat::from_rotation_arc(Vec3::Z,delta.normalize()),..Default::default() },config));
+    }
+    canopy
+}
+
+#[cfg(test)]
+mod canopy_tests {
+    use super::*;
+    #[test]
+    fn balcony_canopy_clears_door_frame_and_stays_below_roof() {
+        let cfg = BuildingConfig::default();
+        for facade in Facade::ALL {
+            for height in [2.6,2.9,3.2] {
+                let ctx = WallCtx { facade,center:Vec3::ZERO,thickness:cfg.wall_thickness };
+                let balcony = balcony_part(&ctx,height,Color::WHITE,Color::WHITE,true,&cfg);
+                let door = &balcony.children[0];
+                let mut door_top = f32::NEG_INFINITY;
+                for child in &door.children {
+                    for face in &child.faces {
+                        for p in face.points() {
+                            let world = door.transform.transform_point(child.transform.transform_point(*p));
+                            door_top = door_top.max(world.z);
+                        }
+                    }
+                }
+                let canopy = balcony.children.iter().find(|p| p.name=="entrance-canopy").unwrap();
+                let mut bottom = f32::INFINITY;
+                let mut top = f32::NEG_INFINITY;
+                for face in &canopy.children[0].faces {
+                    for p in face.points() {
+                        let z = canopy.transform.transform_point(*p).z;
+                        bottom=bottom.min(z); top=top.max(z);
+                    }
+                }
+                assert!(bottom>door_top+0.05);
+                assert!(top<height*0.5-cfg.roof_thickness-0.05);
+            }
+        }
+    }
+}
+
+/// Dedicated seed stream keeps the canopy decision stable across regeneration.
+pub fn canopy_selected(config: &BuildingConfig, label: &str, probability: f32) -> bool {
+    config.seed.with_label(label).rng().random::<f32>() < probability
+}
+
+#[cfg(test)]
+mod optional_canopy_tests {
+    use super::*;
+    use generation_core::Seed;
+    #[test]
+    fn optional_canopies_can_be_absent_and_keep_seed_decisions() {
+        let mut yes = false;
+        let mut no = false;
+        for seed in 0..40 {
+            let mut cfg = BuildingConfig::default();
+            cfg.seed = Seed::new(seed);
+            let choice = canopy_selected(&cfg,"door-canopy",cfg.door_canopy_probability);
+            assert_eq!(choice,canopy_selected(&cfg,"door-canopy",cfg.door_canopy_probability));
+            yes |= choice; no |= !choice;
+            assert!(!canopy_selected(&cfg,"door-canopy",0.0));
+            assert!(canopy_selected(&cfg,"door-canopy",1.0));
+        }
+        assert!(yes && no);
+        let cfg = BuildingConfig::default();
+        let ctx = WallCtx { facade:Facade::North,center:Vec3::ZERO,thickness:cfg.wall_thickness };
+        let balcony = balcony_part(&ctx,3.0,Color::WHITE,Color::WHITE,false,&cfg);
+        assert!(!balcony.children.iter().any(|c| c.name=="entrance-canopy"));
+    }
+}
+
+/// Conservative bounds for the sloping sheet, including a visible separation.
+pub fn canopy_has_clearance(door_top: f32, canopy_center: f32, ceiling: f32) -> bool {
+    canopy_center - 0.065 >= door_top + 0.05
+        && canopy_center + 0.04 <= ceiling - 0.05
 }
