@@ -6,17 +6,21 @@
 //! - [`geometry`] — полигональные модели (грани параллелепипедов, конусов);
 //! - [`point_clouds`] — классы, облака точек и их генерация по поверхностям;
 //! - [`general`] — общий функционал генераторов (режимы отображения,
-//!   перегенерация, горячие клавиши).
+//!   перегенерация, горячие клавиши);
+//! - [`presets`] — хранение и выбор демо-пресетов (манифесты, группы,
+//!   сохранение выбора).
 
 pub mod general;
 pub mod geometry;
 pub mod occupancy;
 #[path = "point-clouds/mod.rs"]
 pub mod point_clouds;
+pub mod presets;
 pub mod seeds;
 
 pub use general::*;
 pub use geometry::Polygon;
 pub use occupancy::Occupancy;
 pub use point_clouds::{Point, PointClass, PointCloud};
+pub use presets::*;
 pub use seeds::{GlobalSeed, Seed};

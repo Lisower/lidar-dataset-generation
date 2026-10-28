@@ -1,0 +1,6 @@
+(
+    id: "multi-level",
+    name: "разноуровневая территория",
+    description: "",
+    kind: "multi-level",
+)

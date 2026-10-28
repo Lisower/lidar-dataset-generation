@@ -1,17 +1,21 @@
 //! Composition of existing landscape, vegetation and building generators.
 //! No Bevy rendering is duplicated in this crate.
 use std::f32::consts::TAU;
+use std::path::Path;
 
 use bevy::math::{Vec2, Vec3};
 use buildings_generator::{Building, BuildingConfig};
+use generation_core::presets::{load_preset_config, resolve_cross_category};
 use generation_core::{Occupancy, Seed};
-use landscapes_generator::{Landscape, generation::landscape};
+use landscapes_generator::{
+    Landscape, LandscapeConfig, LandscapePreset, generation::landscape,
+};
 use plants_generator::generation::grass::generate_tuft;
-use plants_generator::{PlacedPlant, PlacedTuft, Plant, PlantPreset};
+use plants_generator::{PlacedPlant, PlacedTuft, Plant, PlantConfig, PlantPreset};
 use rand::RngExt;
 
 use crate::placement::{PlacementMap, PlacementRules};
-use crate::preset::TerrainPreset;
+use crate::preset::{TerrainPreset, TerrainPresetData};
 
 /// Building + placement on the landscape. Building geometry is in local coordinates.
 #[derive(Debug, Clone)]
@@ -49,23 +53,6 @@ impl TerrainScene {
     pub fn object_count(&self) -> usize {
         self.trees.len() + self.bushes.len() + self.grass.len() + self.buildings.len()
     }
-}
-
-fn reserve_road(
-    map: &mut PlacementMap<'_>,
-    roads: &mut Vec<RoadCorridor>,
-    start: Vec2,
-    end: Vec2,
-    width: f32,
-) {
-    let diff = end - start;
-    let center = (start + end) * 0.5;
-    map.reserve(Occupancy::square(
-        center,
-        Vec2::new(diff.length() * 0.5, width * 0.5),
-        diff.y.atan2(diff.x),
-    ));
-    roads.push(RoadCorridor { start, end, width });
 }
 
 fn clusters(seed: Seed, count: usize) -> Vec<Vec2> {
@@ -127,72 +114,126 @@ TerrainPreset::Village => Vec2::new(
 
 /// Generate a composite scene, using only the existing generators.
 /// The number of objects can be lower than requested if the free terrain is insufficient.
+///
+/// Без `presets_root` (и в headless-режиме) суб-конфиги берутся из архетипов
+/// `TerrainPreset` — поведение полностью совпадает с прежним.
 pub fn generate(preset: TerrainPreset, seed: Seed) -> TerrainScene {
-    let mut cfg = landscapes_generator::resolve(preset.landscape(), seed.with_label("landscape"));
-    cfg.size_m = 100.0;
+    let data = TerrainPresetData::from_preset(preset);
+    generate_impl(Some(preset), &data, seed, None)
+}
+
+/// Generate from preset data (loaded from `presets/terrains/.../config.ron`).
+///
+/// `presets_root` — корень каталога пресетов (для cross-category подгрузки
+/// ландшафта, растений и зданий по `resolve_cross_category`); `None` —
+/// всё откатывается на архетипы.
+pub fn generate_from_data(
+    data: &TerrainPresetData,
+    seed: Seed,
+    presets_root: Option<&Path>,
+) -> TerrainScene {
+    let preset = TerrainPreset::from_name(&data.name).unwrap_or(TerrainPreset::Field);
+    generate_impl(Some(preset), data, seed, presets_root)
+}
+
+/// Общая реализация: `preset_hint` нужен только для fallback-решений
+/// (тип травы, твики зданий по архетипу) и для функций расстановки.
+#[allow(clippy::too_many_arguments)]
+fn generate_impl(
+    preset_hint: Option<TerrainPreset>,
+    data: &TerrainPresetData,
+    seed: Seed,
+    presets_root: Option<&Path>,
+) -> TerrainScene {
+    // Архетип для расстановки; в демо совпадает с именем пресета.
+    let preset = preset_hint
+        .unwrap_or_else(|| TerrainPreset::from_name(&data.name).unwrap_or(TerrainPreset::Field));
+
+    // Ландшафт: конфиг из файла суб-пресета (с заменой seed), либо архетип.
+    let sub_landscape = presets_root
+        .and_then(|root| resolve_cross_category("landscapes", &data.landscape_id, root))
+        .and_then(|meta| load_preset_config::<LandscapeConfig>(&meta));
+    let mut cfg = match sub_landscape {
+        Some(mut loaded) => {
+            loaded.seed = seed.with_label("landscape");
+            loaded.size_m = 100.0;
+            loaded
+        }
+        None => {
+            // Файл ландшафта недоступен — архетип по архетипу террейна.
+            let fallback = preset_hint
+                .map(TerrainPreset::landscape)
+                .unwrap_or(LandscapePreset::Plain);
+            let mut c = landscapes_generator::resolve(fallback, seed.with_label("landscape"));
+            c.size_m = 100.0;
+            c
+        }
+    };
     // Developed areas need moderately smooth ground for building foundations.
-    if matches!(
-        preset,
-        TerrainPreset::Village | TerrainPreset::Town | TerrainPreset::ForestCabin
-    ) {
+    if data.buildings > 0 {
         cfg.noise.amplitude = cfg.noise.amplitude.min(0.25);
     }
     let landscape = landscape::generate(&cfg);
     let mut map = PlacementMap::new(&landscape);
-    let mut roads = Vec::new();
+    let roads = Vec::new();
 
+    // Целевые счётчики (как прежде, с джиттером ±1/3).
+    let mut count_rng = seed.with_label("object-counts").rng();
+    let tree_count = count_rng.random_range(
+        data.trees.saturating_sub(data.trees / 3)..=data.trees + data.trees / 3,
+    );
+    let bush_count = count_rng.random_range(
+        data.bushes.saturating_sub(data.bushes / 3)..=data.bushes + data.bushes / 3,
+    );
+    let grass_count = count_rng.random_range(
+        data.grass.saturating_sub(data.grass / 3)..=data.grass + data.grass / 3,
+    );
+    let house_count = count_rng.random_range(
+        data.buildings.saturating_sub(data.buildings / 3)..=data.buildings + data.buildings / 3,
+    );
 
-
-    let (base_trees, base_bushes, base_grass, base_houses) = preset.amounts();
-
-let mut count_rng = seed.with_label("object-counts").rng();
-
-let tree_count = count_rng.random_range(
-    base_trees.saturating_sub(base_trees / 3)
-        ..=base_trees + base_trees / 3
-);
-
-let bush_count = count_rng.random_range(
-    base_bushes.saturating_sub(base_bushes / 3)
-        ..=base_bushes + base_bushes / 3
-);
-
-let grass_count = count_rng.random_range(
-    base_grass.saturating_sub(base_grass / 3)
-        ..=base_grass + base_grass / 3
-);
-
-let house_count = count_rng.random_range(
-    base_houses.saturating_sub(base_houses / 3)
-        ..=base_houses + base_houses / 3
-);
+    // Здания: базовый конфиг из файла (твики этажей/размеров в нём уже есть),
+    // либо архетип с твиками по `preset`.
+    let building_base = if data.buildings == 0 || data.building_id.is_empty() {
+        None
+    } else {
+        presets_root
+            .and_then(|root| resolve_cross_category("buildings", &data.building_id, root))
+            .and_then(|meta| load_preset_config::<BuildingConfig>(&meta))
+    };
     let mut buildings = Vec::new();
     let mut house_rng = seed.with_label("building-positions").rng();
     for idx in 0..house_count {
-        let mut build_cfg = BuildingConfig::default();
+        let mut build_cfg = match &building_base {
+            Some(base) => base.clone(),
+            None => {
+                let mut b = BuildingConfig::default();
+                match preset {
+                    TerrainPreset::Town => {
+                        b.min_size = 5.0;
+                        b.max_size = 9.0;
+                        b.min_floors = 2;
+                        b.max_floors = 4;
+                    }
+                    TerrainPreset::Village | TerrainPreset::ForestCabin => {
+                        b.min_size = 5.0;
+                        b.max_size = 9.0;
+                        b.min_floors = 1;
+                        b.max_floors = 2;
+                    }
+                    _ => {}
+                }
+                b
+            }
+        };
         build_cfg.seed = seed.with_label("building-model").child(idx as u64);
-        match preset {
-            TerrainPreset::Town => {
-                build_cfg.min_size = 5.0;
-                build_cfg.max_size = 9.0;
-                build_cfg.min_floors = 2;
-                build_cfg.max_floors = 4;
-            }
-            TerrainPreset::Village | TerrainPreset::ForestCabin => {
-                build_cfg.min_size = 5.0;
-                build_cfg.max_size = 9.0;
-                build_cfg.min_floors = 1;
-                build_cfg.max_floors = 2;
-            }
-            _ => {}
-        }
         let building = Building::generate(&build_cfg);
         let radius = building.occupancy.shape.bounding_radius();
         // A circle around the entire foundation is conservative for collision checks.
         let rules = PlacementRules {
             radius,
             clearance: 1.5,
-            max_slope_deg: 10.0,
+            max_slope_deg: data.max_slope_deg,
         };
         for _ in 0..120 {
             let candidate = house_candidate(&mut house_rng, preset);
@@ -208,23 +249,38 @@ let house_count = count_rng.random_range(
         }
     }
 
+    // Деревья и кусты: конфиги из файлов суб-пресетов, либо архетипы.
+    let tree_base = if data.trees == 0 {
+        None
+    } else {
+        load_plant_base(presets_root, &data.tree_id)
+    };
+    let bush_base = if data.bushes == 0 {
+        None
+    } else {
+        load_plant_base(presets_root, &data.bush_id)
+    };
     let tree_anchors = clusters(seed.with_label("tree-anchors"), 7);
     let bush_anchors = clusters(seed.with_label("bush-anchors"), 10);
     let mut trees = Vec::new();
     let mut bushes = Vec::new();
-    for (kind, count, anchors, out) in [
+    for (kind, count, anchors, base, out) in [
         (
             PlantPreset::DeciduousTree,
             tree_count,
             &tree_anchors,
+            tree_base.as_ref(),
             &mut trees,
         ),
-        (PlantPreset::Bush, bush_count, &bush_anchors, &mut bushes),
+        (PlantPreset::Bush, bush_count, &bush_anchors, bush_base.as_ref(), &mut bushes),
     ] {
         let mut rng = seed.with_label(kind.label()).rng();
         for i in 0..count {
             let obj_seed = seed.with_label(kind.label()).child(i as u64);
-            let plant_cfg = plants_generator::resolve(kind, obj_seed);
+            let plant_cfg = match base {
+                Some(b) => b.with_seed(obj_seed),
+                None => plants_generator::resolve(kind, obj_seed),
+            };
             let plant = Plant::generate(&plant_cfg);
             let radius = plant.extent.max(0.1);
             let rules = PlacementRules {
@@ -242,7 +298,7 @@ let house_count = count_rng.random_range(
                 if preset == TerrainPreset::ForestCabin && xy.length() < 17.0 + radius {
                     continue;
                 }
-                if let Some(_) = map.try_place(xy, rules) {
+                if map.try_place(xy, rules).is_some() {
                     out.push(PlacedPlant {
                         position: xy,
                         rotation: rng.random_range(0.0..TAU),
@@ -254,7 +310,8 @@ let house_count = count_rng.random_range(
         }
     }
 
-    let grass_preset = if matches!(
+    // Трава: конфиг из файла суб-пресета, либо архетип (редкая/густая).
+    let grass_fallback = if matches!(
         preset,
         TerrainPreset::Field | TerrainPreset::Village | TerrainPreset::Town
     ) {
@@ -262,12 +319,20 @@ let house_count = count_rng.random_range(
     } else {
         PlantPreset::TallGrass
     };
+    let grass_base = if data.grass == 0 {
+        None
+    } else {
+        load_plant_base(presets_root, &data.grass_id)
+    };
     let mut grass = Vec::new();
     let mut grass_rng = seed.with_label("grass-positions").rng();
     let anchors = clusters(seed.with_label("grass-anchors"), 14);
     for i in 0..grass_count {
         let tuft_seed = seed.with_label("grass-model").child(i as u64);
-        let grass_cfg = plants_generator::resolve(grass_preset, tuft_seed);
+        let grass_cfg = match &grass_base {
+            Some(b) => b.with_seed(tuft_seed),
+            None => plants_generator::resolve(grass_fallback, tuft_seed),
+        };
         let tuft = generate_tuft(&grass_cfg, tuft_seed);
         let rules = PlacementRules {
             radius: tuft.radius.max(0.05),
@@ -305,6 +370,14 @@ let house_count = count_rng.random_range(
         roads,
         footprints,
     }
+}
+
+/// Загрузить базовый конфиг растения суб-пресета (`presets/plants/<id>`),
+/// если пресеты доступны; иначе `None` — генератор сам возьмёт архетип.
+fn load_plant_base(presets_root: Option<&Path>, id: &str) -> Option<PlantConfig> {
+    presets_root
+        .and_then(|root| resolve_cross_category("plants", id, root))
+        .and_then(|meta| load_preset_config::<PlantConfig>(&meta))
 }
 
 #[cfg(test)]

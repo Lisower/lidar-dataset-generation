@@ -351,7 +351,7 @@ fn grow(
 ) {
     let parent_position = skeleton.points[parent].position;
 
-    let (length, vertical, horizontal, radius, taper) = if branch.level == 0 {
+    let (mut length, vertical, horizontal, mut radius, taper) = if branch.level == 0 {
         (
             rng.random_range(branch.length_min..=branch.length_max),
             rng.random_range(branch.vertical_min..=branch.vertical_max),
@@ -365,9 +365,30 @@ fn grow(
             rng.random_range(branch.vertical_min..=branch.vertical_max) + parent_vertical,
             rng.random_range(branch.horizontal_min..=branch.horizontal_max) + parent_horizontal,
             rng.random_range(branch.radius_min..=branch.radius_max) * parent_radius * parent_taper,
-            rng.random_range(branch.taper_min..=branch.taper_max) * parent_taper,
+            // Тапер: по умолчанию накапливается (новый движок), но старые
+            // CSV-деревья берут свой тапер независимо от родителя (как в
+            // старой программе) — иначе на 30–40 уровнях накопленный тапер
+            // квадратично схлопывает радиус кроны.
+            if branch.independent_taper {
+                rng.random_range(branch.taper_min..=branch.taper_max)
+            } else {
+                rng.random_range(branch.taper_min..=branch.taper_max) * parent_taper
+            },
         )
     };
+
+    // Клэмп размера сегмента (для старых CSV-деревьев со своими таблицами):
+    // ограничивает длину и радиус в метрах ПОСЛЕ умножения на родителя —
+    // «иглы» нижних уровней не раздуваются до брёвен, на верхушке не
+    // превращаются в крошки; уменьшение размера от уровня к уровню
+    // сглаживается. `branch.length_clamp/radius_clamp` заполняется в
+    // конвертере для зелёных игл ели.
+    if let Some((lo, hi)) = branch.length_clamp {
+        length = length.clamp(lo, hi);
+    }
+    if let Some((lo, hi)) = branch.radius_clamp {
+        radius = radius.clamp(lo, hi);
+    }
 
     // Направление — глобальные сферические координаты, как в прототипе.
     // Накопленный азимут «заводит» ветку по кругу, но не складывает её на
@@ -422,16 +443,32 @@ fn grow(
     if from >= window_end {
         return;
     }
-    let mut candidates: Vec<usize> = (from..window_end).collect();
 
-    // Детерминированное перемешивание окна (частичный Фишер–Йетс).
-    for i in (1..candidates.len()).rev() {
-        let j = rng.random_range(0..=i);
-        candidates.swap(i, j);
-    }
+    // Способ выбора дочерних веток:
+    // - `consecutive_children: true` (старые CSV-деревья) — дети строго подряд
+    //   от `first_child_index`, первые `children` веток уровня, как в старой
+    //   программе (`GenerateChildren`: цикл `startChildIndex + i`). Первая
+    //   ветка окна — «продолжение» родителя (ствол/ветка), поэтому случайный
+    //   выбор из окна терял бы её и дерево обрывалось;
+    // - иначе (пресеты нового движка) — окно из `children_max` веток
+    //   перемешивается и берутся случайные `children`, так у тройки шаблонов
+    //   «продолжить/−поворот/+поворот» достижимы все три и азимут не дрейфует.
+    let indices: Vec<usize> = if branch.consecutive_children {
+        let count = children.min(next_level.len().saturating_sub(from));
+        (from..from + count).collect()
+    } else {
+        let mut candidates: Vec<usize> = (from..window_end).collect();
+        // Детерминированное перемешивание окна (частичный Фишер–Йетс).
+        for i in (1..candidates.len()).rev() {
+            let j = rng.random_range(0..=i);
+            candidates.swap(i, j);
+        }
+        candidates.truncate(children);
+        candidates
+    };
 
     let mut added = 0usize;
-    for &ci in candidates.iter().take(children) {
+    for ci in indices {
         if skeleton.points.len() >= config.max_branches {
             break;
         }

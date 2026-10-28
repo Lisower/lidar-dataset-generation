@@ -28,7 +28,7 @@ pub fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 /// Высота аддитивно смещается на `profile(знаковое_расстояние)`. Профиль сам
 /// решает, как ведёт себя поверхность с каждой стороны: две плато, склон
 /// с продолжением, спуск под уровень воды и т.п.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StepFeature {
     /// Ось «шва» (обычно прямая, выходящая за границы карты).
     pub curve: Curve,
@@ -46,7 +46,7 @@ impl StepFeature {
 
 /// Русло/каньон/ущелье/наклонная река/водопад: врезание минимумом по
 /// абсолютному дну.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelFeature {
     /// Ось русла (открытая кривая через карту).
     pub curve: Curve,
@@ -157,7 +157,7 @@ fn lerp_nodes(nodes: &[Vec2], t: f32) -> f32 {
 }
 
 /// Замкнутая чаша: пруд/котловина.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BowlFeature {
     /// Замкнутый контур чаши (уже «расшумленный»).
     pub contour: Curve,
@@ -206,7 +206,7 @@ impl BowlFeature {
 }
 
 /// Любая линия-деформация рельефа.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TerrainFeature {
     /// Уступ/склон/берег (аддитивное смещение по знаковому расстоянию).
     Step(StepFeature),

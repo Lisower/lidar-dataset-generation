@@ -1,0 +1,6 @@
+(
+    id: "river",
+    name: "речка",
+    description: "",
+    kind: "river",
+)

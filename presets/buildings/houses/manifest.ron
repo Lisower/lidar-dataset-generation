@@ -1,0 +1,6 @@
+(
+    id: "houses",
+    name: "Частные дома",
+    description: "",
+    is_group: true,
+)

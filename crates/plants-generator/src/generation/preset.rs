@@ -8,8 +8,11 @@
 use bevy::color::Color;
 use rand::RngExt;
 use rand::rngs::StdRng;
+use std::path::PathBuf;
 
-use generation_core::Seed;
+use generation_core::{
+    PRESETS_DIR, Seed, load_preset_config, resolve_cross_category,
+};
 
 use super::config::{
     BranchGen, BranchLevels, FoliageConfig, FoliagePlacement, FoliageStyle, GrassConfig,
@@ -30,11 +33,70 @@ fn preset_rng(preset: PlantPreset, seed: Seed) -> StdRng {
     seed.with_label(preset.label()).rng()
 }
 
+/// Корень каталога пресетов (workspace/presets).
+fn presets_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(PRESETS_DIR)
+}
+
+/// Конфигурация пресета из готового RON-файла каталога `presets/plants/...`
+/// (папки `high/coniferous/fir` и т.д.) — так же, как её читает и приложение
+/// через [`PresetStore`](generation_core::PresetStore). Пресет ищется по id
+/// манифеста ([`PlantPreset::ron_id`]), поэтому папку можно свободно
+/// переименовывать и перекладывать по группам.
+///
+/// Используется для деревьев, перенесённых из старых CSV-таблиц Unity-программы
+/// (ель высокая, сосна, ива, пальмы): таблица ветвления перенесена в RON 1:1,
+/// отдельного кода конвертации в крейте больше нет.
+fn from_ron(preset: PlantPreset) -> PlantConfig {
+    let root = presets_root();
+    let meta = resolve_cross_category("plants", preset.ron_id(), &root).unwrap_or_else(|| {
+        panic!(
+            "пресет «{}» не найден в {} — сгенерируйте его примером `dump_presets`",
+            preset.label(),
+            root.join("plants").display()
+        )
+    });
+    load_preset_config(&meta).unwrap_or_else(|| {
+        panic!(
+            "не читается config.ron пресета «{}»: {}",
+            preset.label(),
+            meta.config_path.display()
+        )
+    })
+}
+
 /// Полностью разрешённая конфигурация пресета `preset` от `seed`.
 pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
+    // Деревья, перенесённые из старых CSV-таблиц старой Unity-программы
+    // (ель высокая, сосна, ива, пальмы), заданы готовыми пресетами RON в
+    // `presets/plants/...` — конфигурация читается из `config.ron` (1:1 из
+    // таблицы ветвления), как это делает и приложение через `PresetStore`.
+    // Дополнительное дрожание к ним не применяется: разброс даёт сам seed.
+    if matches!(
+        preset,
+        PlantPreset::Fir
+            | PlantPreset::Pine
+            | PlantPreset::Willow
+            | PlantPreset::Palm
+            | PlantPreset::PalmCoconuts
+    ) {
+        let mut cfg = from_ron(preset);
+        cfg.seed = seed;
+        return cfg;
+    }
+
     let mut cfg = match preset {
         PlantPreset::DeciduousTree => deciduous_tree(),
         PlantPreset::Spruce => spruce(),
+        // Обработаны выше (загрузка из RON-пресетов) — сюда не попадают.
+        PlantPreset::Fir
+        | PlantPreset::Pine
+        | PlantPreset::Willow
+        | PlantPreset::Palm
+        | PlantPreset::PalmCoconuts => unreachable!("пресет RON-каталога"),
         PlantPreset::Bush => bush(),
         PlantPreset::TallGrass => tall_grass(),
         PlantPreset::SparseGrass => sparse_grass(),
@@ -81,6 +143,11 @@ fn sector_branch(
         children_max: children.1,
         first_child_index: first_child,
         mesh_sides: sides,
+        consecutive_children: false,
+        independent_taper: false,
+        length_clamp: None,
+        radius_clamp: None,
+        color: None,
     }
 }
 
@@ -160,6 +227,11 @@ fn branching_level(
             children_max: children.1,
             first_child_index: 0,
             mesh_sides: sides,
+            consecutive_children: false,
+            independent_taper: false,
+            length_clamp: None,
+            radius_clamp: None,
+            color: None,
         })
         .collect()
 }

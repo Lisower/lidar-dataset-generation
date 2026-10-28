@@ -13,9 +13,10 @@ use bevy::math::Vec2;
 use generation_core::Seed;
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 use rand::RngExt;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Результат поиска ближайшей точки на кривой.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Nearest {
     /// Беззнаковое расстояние до кривой, м.
     pub distance: f32,
@@ -26,14 +27,40 @@ pub struct Nearest {
 }
 
 /// Полилиния: открытая (уступ, берег, русло) или замкнутая (контур чаши).
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Длина дуги не сериализуется (она выводится из вершин) и пересчитывается
+/// при загрузке из RON — поэтому сохранённый `config.ron` всегда корректен.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Curve {
     /// Вершины ломаной (для открытой — минимум 2).
     pub points: Vec<Vec2>,
     /// Замкнутая кривая (последняя точка соединена с первой).
     pub closed: bool,
-    /// Полная длина дуги, м.
+    /// Полная длина дуги, м (пересчитывается; в RON не пишется).
+    #[serde(skip)]
     pub length: f32,
+}
+
+impl<'de> Deserialize<'de> for Curve {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            points: Vec<Vec2>,
+            #[serde(default)]
+            closed: bool,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let mut curve = Self {
+            points: raw.points,
+            closed: raw.closed,
+            length: 0.0,
+        };
+        curve.update_length();
+        Ok(curve)
+    }
 }
 
 impl Curve {

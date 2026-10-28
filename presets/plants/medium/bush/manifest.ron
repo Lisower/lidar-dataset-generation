@@ -1,0 +1,6 @@
+(
+    id: "bush",
+    name: "куст",
+    description: "",
+    kind: "bush",
+)

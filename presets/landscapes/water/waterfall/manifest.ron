@@ -1,0 +1,6 @@
+(
+    id: "waterfall",
+    name: "водопады",
+    description: "",
+    kind: "waterfall",
+)

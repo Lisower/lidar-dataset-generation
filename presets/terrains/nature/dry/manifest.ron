@@ -1,0 +1,6 @@
+(
+    id: "dry",
+    name: "Сухие",
+    description: "",
+    is_group: true,
+)

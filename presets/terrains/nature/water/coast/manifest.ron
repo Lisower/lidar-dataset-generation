@@ -1,0 +1,6 @@
+(
+    id: "coast",
+    name: "Побережье",
+    description: "",
+    kind: "coast",
+)

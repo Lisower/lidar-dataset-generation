@@ -1,0 +1,6 @@
+(
+    id: "coniferous",
+    name: "Хвойные",
+    description: "",
+    is_group: true,
+)

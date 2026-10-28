@@ -1,0 +1,6 @@
+(
+    id: "apartment-block",
+    name: "Apartment block",
+    description: "",
+    kind: "apartment-block",
+)

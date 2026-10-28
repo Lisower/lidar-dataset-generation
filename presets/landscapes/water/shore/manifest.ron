@@ -1,0 +1,6 @@
+(
+    id: "shore",
+    name: "берег реки/озера",
+    description: "",
+    kind: "shore",
+)

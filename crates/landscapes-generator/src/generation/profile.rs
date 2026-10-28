@@ -8,7 +8,7 @@
 use bevy::math::Vec2;
 
 /// Профиль `h = f(d)` от (знакового) расстояния `d` до кривой.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     /// Узлы `(d, h)` со строго возрастающим `d`.
     pub nodes: Vec<Vec2>,

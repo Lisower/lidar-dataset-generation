@@ -1,0 +1,14 @@
+(
+    seed: (12648430),
+    name: "field",
+    landscape_id: "plain",
+    tree_id: "deciduous-tree",
+    bush_id: "bush",
+    grass_id: "sparse-grass",
+    building_id: "",
+    trees: 6,
+    bushes: 16,
+    grass: 260,
+    buildings: 0,
+    max_slope_deg: 10.0,
+)

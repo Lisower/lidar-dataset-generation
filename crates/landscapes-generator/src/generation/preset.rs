@@ -93,6 +93,29 @@ impl LandscapePreset {
         }
     }
 
+    /// Канонический `kind` архетипа — тег из `manifest.ron` демо-пресетов
+    /// (например `"plain"`, `"slope"`, `"canyon-ledge"`).
+    ///
+    /// Это не имя папки: программы находят ландшафт по `kind` из манифеста,
+    /// поэтому папку можно переименовывать и перекладывать по группам —
+    /// приложение продолжит находить пресет (главное, чтобы RON были верными).
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::Slope => "slope",
+            Self::PlainSlope => "plain-slope",
+            Self::MultiLevel => "multi-level",
+            Self::CanyonLedge => "canyon-ledge",
+            Self::Gorge => "gorge",
+            Self::River => "river",
+            Self::Pond => "pond",
+            Self::Shore => "shore",
+            Self::SlopingRiver => "sloping-river",
+            Self::Waterfalls => "waterfall",
+            Self::Hills => "hills",
+        }
+    }
+
     /// Следующий пресет по кругу.
     pub fn next(self) -> Self {
         match Self::ALL.iter().position(|&p| p == self) {
@@ -146,7 +169,7 @@ pub fn resolve(preset: LandscapePreset, seed: Seed) -> LandscapeConfig {
         LandscapePreset::Hills => hills(seed),
     };
     cfg.seed = seed;
-    cfg.label = preset.label();
+    cfg.label = preset.label().to_string();
     cfg
 }
 
@@ -653,7 +676,7 @@ fn hills(seed: Seed) -> LandscapeConfig {
 fn default_config() -> LandscapeConfig {
     LandscapeConfig {
         seed: Seed::default(),
-        label: "",
+        label: String::new(),
         size_m: 100.0,
         resolution: 0.5,
         base: BasePlane::flat(4.0),

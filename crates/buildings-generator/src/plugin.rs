@@ -21,14 +21,14 @@ use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
 use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
 use generation_core::seeds::GlobalSeed;
-use generation_core::{PointClass, PointCloud, Seed, ViewMode};
+use generation_core::{load_preset_config, PointClass, PointCloud, Seed, ViewMode, PresetStore};
 
-use crate::generation::{Building, BuildingConfig, BuildingPreset};
+use crate::generation::{Building, BuildingConfig};
 use crate::visual::{PointCloudEntity, VisualMesh, spawn_building};
 
 /// Подсказка об управлении.
 const HELP: &str =
-    "[V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
+    "[Ctrl+S] пресеты  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
 
 /// Состояние текущего здания: данные и корень его дерева сущностей.
 #[derive(Resource, Default)]
@@ -75,22 +75,19 @@ impl Plugin for BuildingPlugin {
 /// `R` / `Shift + R` — перегенерация здания; `V` обрабатывает
 /// [`GenerationControlsPlugin`], а этот плагин применяет новый [`ViewMode`]
 /// к сущностям.
+#[allow(clippy::too_many_arguments)]
 fn regenerate(
     mut commands: Commands,
     mut requests: MessageReader<RegenerationRequest>,
     mut global_seed: ResMut<GlobalSeed>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut config: ResMut<BuildingConfig>,
-    keys: Res<ButtonInput<KeyCode>>,
+    config: Res<BuildingConfig>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<BuildingState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
-    let mut regenerate = keys.just_pressed(KeyCode::KeyP);
-    if regenerate {
-        let index = BuildingPreset::ALL.iter().position(|p| *p == config.preset).unwrap_or(0);
-        config.preset = BuildingPreset::ALL[(index + 1) % BuildingPreset::ALL.len()];
-    }
+    let mut regenerate = false;
     for request in requests.read() {
         if !request.same_seed {
             global_seed.regenerate();
@@ -108,6 +105,7 @@ fn regenerate(
         &mut materials,
         global_seed.0,
         &config,
+        store.as_deref(),
         &mut state,
         orbit,
     );
@@ -121,6 +119,7 @@ fn setup_scene(
     asset_server: Res<AssetServer>,
     global_seed: Res<GlobalSeed>,
     config: Res<BuildingConfig>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<BuildingState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
@@ -171,6 +170,7 @@ fn setup_scene(
         &mut materials,
         global_seed.0,
         &config,
+        store.as_deref(),
         &mut state,
         orbit.as_deref_mut(),
     );
@@ -224,12 +224,16 @@ fn ground_point_cloud() -> PointCloud {
 
 /// Перегенерировать здание: убрать старое, сгенерировать новое из `seed`
 /// и подстроить камеру под его габариты.
+///
+/// Конфигурация берётся из случайно выбранного пресета ([`PresetStore`],
+/// файл `config.ron`); при отсутствии плагина пресетов — из `fallback`.
 fn regenerate_building(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     seed: Seed,
-    config: &BuildingConfig,
+    fallback: &BuildingConfig,
+    store: Option<&PresetStore>,
     state: &mut BuildingState,
     orbit: Option<&mut OrbitCamera>,
 ) {
@@ -237,9 +241,8 @@ fn regenerate_building(
         commands.entity(root).despawn();
     }
 
-    let mut gen_config = config.clone();
-    gen_config.seed = seed;
-    let building = Building::generate(&gen_config);
+    let config = resolve_config(seed, fallback, store);
+    let building = Building::generate(&config);
     let spawned = spawn_building(commands, meshes, materials, &building);
 
     if let Some(orbit) = orbit {
@@ -253,6 +256,22 @@ fn regenerate_building(
     state.root = Some(spawned.root);
 
     info!("Здание сгенерировано: seed = {seed}");
+}
+
+/// Конфигурация из случайно выбранного пресета (`config.ron`), либо fallback
+/// на базовую конфигурацию плагина; seed всегда подставляется актуальный.
+fn resolve_config(seed: Seed, fallback: &BuildingConfig, store: Option<&PresetStore>) -> BuildingConfig {
+    if let Some(store) = store {
+        if let Some(meta) = store.random() {
+            if let Some(mut config) = load_preset_config::<BuildingConfig>(meta) {
+                config.seed = seed;
+                return config;
+            }
+        }
+    }
+    let mut config = fallback.clone();
+    config.seed = seed;
+    config
 }
 
 /// Обновить панель информации при смене здания или режима отображения.
@@ -273,7 +292,7 @@ fn update_info(
     };
 
     let mut lines = Vec::new();
-    lines.push(format!("Preset: {} [P]", building.config.preset.label()));
+    lines.push(format!("Preset: {} [Ctrl+S]", building.config.preset.label()));
     lines.push(format!("Здание · seed {}", building.seed));
     lines.push(format!(
         "Размеры {:.1} × {:.1} м · {} · высота стен {:.1} м",

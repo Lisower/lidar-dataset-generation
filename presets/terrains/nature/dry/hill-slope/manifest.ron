@@ -1,0 +1,6 @@
+(
+    id: "hill-slope",
+    name: "Склон холма",
+    description: "",
+    kind: "hill-slope",
+)

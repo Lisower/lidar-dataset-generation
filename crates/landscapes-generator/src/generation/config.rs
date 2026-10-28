@@ -3,6 +3,7 @@
 use bevy::ecs::resource::Resource;
 use bevy::math::Vec2;
 use generation_core::Seed;
+use serde::{Deserialize, Serialize};
 
 use super::features::TerrainFeature;
 
@@ -11,7 +12,7 @@ use super::features::TerrainFeature;
 /// Это «начальное поле высот», из которого линии-деформации лепят рельеф.
 /// Плоская плоскость даёт равнину, наклонная — склон (горы/холм), при этом
 /// сама поверхность может быть ещё и «каменистой» от шума.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BasePlane {
     /// Базовая высота в центре карты, м.
     pub z0: f32,
@@ -38,7 +39,7 @@ impl BasePlane {
 /// Частота (`frequency`) задаёт масштаб неровностей: чем она больше, тем
 /// мельче и «скалистее» поверхность; амплитуда (`amplitude`) — вертикальный
 /// размах в метрах.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TerrainNoise {
     /// Число октав fBm.
     pub octaves: usize,
@@ -53,7 +54,7 @@ pub struct TerrainNoise {
 }
 
 /// Продольный профиль воды вдоль русла (параметр `t` от 0..1 — вдоль дуги).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Longitudinal {
     /// Горизонтальная вода (озеро-линза, речка в низине).
     Flat { water: f32 },
@@ -100,12 +101,16 @@ impl Longitudinal {
 }
 
 /// Конфигурация генерации ландшафта.
-#[derive(Resource, Debug, Clone)]
+///
+/// Пресеты хранятся как сериализованные [`LandscapeConfig`] в `config.ron`
+/// (папки `presets/landscapes/...`): генератор читает файл и строит по нему
+/// объект.
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct LandscapeConfig {
     /// Глобальный seed — вся случайность детерминирована от него.
     pub seed: Seed,
     /// Имя пресета (для панели информации и логов).
-    pub label: &'static str,
+    pub label: String,
     /// Размер квадратной карты, м (по умолчанию 100).
     pub size_m: f32,
     /// Шаг сетки рельефа, м (0.5 — хорошее разрешение для 100×100).
@@ -129,7 +134,7 @@ impl Default for LandscapeConfig {
     fn default() -> Self {
         Self {
             seed: Seed::default(),
-            label: "",
+            label: String::new(),
             size_m: 100.0,
             resolution: 0.5,
             base: BasePlane::flat(4.0),

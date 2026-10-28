@@ -1,0 +1,6 @@
+(
+    id: "hills",
+    name: "холмы",
+    description: "",
+    kind: "hills",
+)

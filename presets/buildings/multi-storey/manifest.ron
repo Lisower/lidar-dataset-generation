@@ -1,0 +1,6 @@
+(
+    id: "multi-storey",
+    name: "Многоэтажки",
+    description: "",
+    is_group: true,
+)

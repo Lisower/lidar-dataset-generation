@@ -1,0 +1,6 @@
+(
+    id: "plain-slope",
+    name: "равнина-склон",
+    description: "",
+    kind: "plain-slope",
+)

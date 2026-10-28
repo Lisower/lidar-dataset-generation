@@ -1,0 +1,6 @@
+(
+    id: "sloping-river",
+    name: "Наклонная река",
+    description: "",
+    kind: "sloping-river",
+)

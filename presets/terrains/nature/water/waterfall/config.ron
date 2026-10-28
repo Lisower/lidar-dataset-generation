@@ -1,0 +1,14 @@
+(
+    seed: (12648430),
+    name: "waterfall",
+    landscape_id: "waterfall",
+    tree_id: "deciduous-tree",
+    bush_id: "bush",
+    grass_id: "tall-grass",
+    building_id: "",
+    trees: 11,
+    bushes: 18,
+    grass: 90,
+    buildings: 0,
+    max_slope_deg: 10.0,
+)

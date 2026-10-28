@@ -1,0 +1,6 @@
+(
+    id: "rectangular",
+    name: "Rectangular",
+    description: "",
+    kind: "rectangular",
+)

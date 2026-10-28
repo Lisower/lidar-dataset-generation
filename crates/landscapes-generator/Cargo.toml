@@ -17,7 +17,8 @@ path = "src/main.rs"
 [dependencies]
 generation-core = { path = "../generation-core" }
 bevy-utils = { path = "../bevy-utils" }
-bevy.workspace = true
+bevy = { workspace = true, features = ["serialize"] }
 serde.workspace = true
+ron.workspace = true
 rand.workspace = true
 noise.workspace = true

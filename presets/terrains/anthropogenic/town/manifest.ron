@@ -1,0 +1,6 @@
+(
+    id: "town",
+    name: "Городок",
+    description: "",
+    kind: "town",
+)

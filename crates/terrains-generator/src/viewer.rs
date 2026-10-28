@@ -9,6 +9,7 @@ use buildings_generator::visual::{
     PointCloudEntity as BuildingCloud, VisualMesh as BuildingMesh, spawn_building,
 };
 use generation_core::general::RegenerationRequest;
+use generation_core::presets::{PresetStore, load_preset_config};
 use generation_core::seeds::GlobalSeed;
 use generation_core::{Seed, ViewMode};
 use landscapes_generator::visual::{
@@ -18,7 +19,7 @@ use plants_generator::visual::{
     PointCloudEntity as PlantCloud, VisualMesh as PlantMesh, spawn_plant_scene,
 };
 use plants_generator::{GenerationMode, PlacedPlant, PlacedTuft, PlantPreset, PlantScene};
-use terrains_generator::{TerrainPreset, TerrainScene, generate};
+use terrains_generator::{TerrainPreset, TerrainPresetData, TerrainScene, generate, generate_from_data};
 
 #[derive(Resource)]
 struct SelectedPreset(TerrainPreset);
@@ -47,6 +48,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     seed: Res<GlobalSeed>,
     preset: Res<SelectedPreset>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<TerrainViewerState>,
 ) {
     // Same daylight configuration as the project's landscape viewer.
@@ -78,32 +80,23 @@ fn setup(
         &mut materials,
         preset.0,
         seed.0,
+        store.as_deref(),
         &mut state,
     );
 }
 
 #[allow(clippy::too_many_arguments)]
 fn regenerate(
-    keys: Res<ButtonInput<KeyCode>>,
     mut requests: MessageReader<RegenerationRequest>,
     mut commands: Commands,
     mut seed: ResMut<GlobalSeed>,
-    mut preset: ResMut<SelectedPreset>,
+    preset: Res<SelectedPreset>,
+    store: Option<Res<PresetStore>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut state: ResMut<TerrainViewerState>,
 ) {
     let mut refresh = false;
-    // Switch between the 12 existing compound presets, retaining the seed.
-    if keys.just_pressed(KeyCode::KeyP) {
-        let index = TerrainPreset::ALL
-            .iter()
-            .position(|candidate| *candidate == preset.0)
-            .unwrap_or(0);
-        preset.0 = TerrainPreset::ALL[(index + 1) % TerrainPreset::ALL.len()];
-        refresh = true;
-    }
-
     // R / Shift+R are emitted by the team's GenerationControlsPlugin.
     for request in requests.read() {
         if !request.same_seed {
@@ -124,8 +117,29 @@ fn regenerate(
         &mut materials,
         preset.0,
         seed.0,
+        store.as_deref(),
         &mut state,
     );
+}
+
+/// Сгенерировать сцену и имя пресета для информационного вывода.
+fn scene_from(
+    preset: TerrainPreset,
+    seed: Seed,
+    store: Option<&PresetStore>,
+) -> (TerrainScene, String) {
+    if let Some(store) = store {
+        // Демонстрация: истинно случайный пресет из выбранных.
+        if let Some(meta) = store.random() {
+            if let Some(data) = load_preset_config::<TerrainPresetData>(meta) {
+                // Корень каталога пресетов = родитель папки категории.
+                let presets_root = store.root.parent().unwrap_or(&store.root);
+                let scene = generate_from_data(&data, seed, Some(presets_root));
+                return (scene, data.name.clone());
+            }
+        }
+    }
+    (generate(preset, seed), preset.name().to_string())
 }
 
 fn build_scene(
@@ -134,9 +148,10 @@ fn build_scene(
     materials: &mut Assets<StandardMaterial>,
     preset: TerrainPreset,
     seed: Seed,
+    store: Option<&PresetStore>,
     state: &mut TerrainViewerState,
 ) {
-    let scene: TerrainScene = generate(preset, seed);
+    let (scene, preset_name) = scene_from(preset, seed, store);
     let root = commands
         .spawn((
             Transform::default(),
@@ -186,7 +201,7 @@ fn build_scene(
     }
     for (band, tufts) in grass_bands {
         let grass_preset = if matches!(
-            preset,
+            scene.preset,
             TerrainPreset::Field | TerrainPreset::Village | TerrainPreset::Town
         ) {
             PlantPreset::SparseGrass
@@ -226,8 +241,8 @@ fn build_scene(
 
     state.root = Some(root);
     info!(
-        "Preset: {} | seed: {} | 100 x 100m | trees={} bushes={} grass={} buildings={} | P next, R new, Shift+R same, V mode, Tab camera",
-        preset.name(),
+        "Preset: {} | seed: {} | 100 x 100m | trees={} bushes={} grass={} buildings={} | Ctrl+S presets, R new, Shift+R same, V mode, Tab camera",
+        preset_name,
         seed,
         scene.trees.len(),
         scene.bushes.len(),

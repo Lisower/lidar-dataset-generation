@@ -1,0 +1,6 @@
+(
+    id: "gorge",
+    name: "ущелье",
+    description: "",
+    kind: "gorge",
+)

@@ -1,0 +1,6 @@
+(
+    id: "medium",
+    name: "Кустарники",
+    description: "",
+    is_group: true,
+)

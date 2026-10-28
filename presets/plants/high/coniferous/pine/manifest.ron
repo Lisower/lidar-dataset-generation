@@ -1,0 +1,6 @@
+(
+    id: "pine",
+    name: "сосна",
+    description: "",
+    kind: "pine",
+)

@@ -1,0 +1,14 @@
+(
+    seed: (12648430),
+    name: "town",
+    landscape_id: "plain",
+    tree_id: "deciduous-tree",
+    bush_id: "bush",
+    grass_id: "sparse-grass",
+    building_id: "apartment-block",
+    trees: 5,
+    bushes: 9,
+    grass: 70,
+    buildings: 14,
+    max_slope_deg: 10.0,
+)

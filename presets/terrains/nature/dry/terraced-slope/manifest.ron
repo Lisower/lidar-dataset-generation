@@ -1,0 +1,6 @@
+(
+    id: "terraced-slope",
+    name: "Террасированный склон",
+    description: "",
+    kind: "terraced-slope",
+)

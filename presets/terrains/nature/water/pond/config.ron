@@ -1,0 +1,14 @@
+(
+    seed: (12648430),
+    name: "pond",
+    landscape_id: "pond",
+    tree_id: "deciduous-tree",
+    bush_id: "bush",
+    grass_id: "tall-grass",
+    building_id: "",
+    trees: 12,
+    bushes: 23,
+    grass: 190,
+    buildings: 0,
+    max_slope_deg: 10.0,
+)

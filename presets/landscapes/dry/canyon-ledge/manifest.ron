@@ -1,0 +1,6 @@
+(
+    id: "canyon-ledge",
+    name: "уступ каньона",
+    description: "",
+    kind: "canyon-ledge",
+)

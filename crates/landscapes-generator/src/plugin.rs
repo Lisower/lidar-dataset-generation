@@ -5,13 +5,16 @@
 //!
 //! - `R` / `Shift + R` ([`RegenerationRequest`]) — перегенерация;
 //! - `V` ([`ViewMode`]) — переключение «визуальные модели / облако точек»;
-//! - `P` — следующий пресет ландшафта (равнина → склон → … → водопады → холмы);
+//! - `Ctrl+S` — окно выбора демо-пресетов (устанавливает
+//!   [`PresetSelectorPlugin`](bevy_utils::preset_selector::PresetSelectorPlugin));
 //! - `Tab` — переключение камеры (обеспечивает `bevy-utils`).
 //!
 //! Управление `V`/`R` обеспечивает
 //! [`GenerationControlsPlugin`](generation_core::GenerationControlsPlugin);
 //! этот плагин лишь реагирует на его сообщения и ресурсы (`GlobalSeed`,
-//! [`ViewMode`]), а `P` обрабатывает сам.
+//! [`ViewMode`]). Демонстрационный пресет выбирается истинно случайно из
+//! выбранных в [`PresetStore`]; при отсутствии плагина пресетов — fallback
+//! на [`LandscapePreset`].
 
 use bevy::asset::Assets;
 use bevy::mesh::Mesh;
@@ -20,7 +23,7 @@ use bevy::prelude::*;
 use bevy_utils::cameras::OrbitCamera;
 use generation_core::general::RegenerationRequest;
 use generation_core::seeds::GlobalSeed;
-use generation_core::{Seed, ViewMode};
+use generation_core::{load_preset_config, Seed, ViewMode, PresetStore};
 
 use crate::generation::landscape::generate;
 use crate::generation::{Landscape, LandscapeConfig, LandscapePreset, resolve};
@@ -28,7 +31,7 @@ use crate::visual::{PointCloudEntity, VisualMesh, spawn_landscape};
 
 /// Подсказка об управлении.
 const HELP: &str =
-    "[P] пресет  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
+    "[Ctrl+S] пресеты  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
 
 /// Состояние текущего ландшафта.
 #[derive(Resource, Default)]
@@ -61,7 +64,6 @@ impl Plugin for LandscapePlugin {
             .add_systems(
                 Update,
                 (
-                    cycle_preset,
                     regenerate,
                     update_info,
                     apply_view_mode,
@@ -69,19 +71,6 @@ impl Plugin for LandscapePlugin {
                 )
                     .chain(),
             );
-    }
-}
-
-/// `P` — следующий пресет ландшафта, перегенерировать с тем же seed.
-fn cycle_preset(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut preset: ResMut<LandscapePreset>,
-    mut writer: MessageWriter<RegenerationRequest>,
-) {
-    if keys.just_pressed(KeyCode::KeyP) {
-        *preset = preset.next();
-        // Тот же seed — удобно сравнивать пресеты на одной «местности».
-        writer.write(RegenerationRequest::same());
     }
 }
 
@@ -94,6 +83,7 @@ fn regenerate(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     preset: Res<LandscapePreset>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<LandscapeState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
@@ -115,6 +105,7 @@ fn regenerate(
         &mut materials,
         global_seed.0,
         *preset,
+        store.as_deref(),
         &mut state,
         orbit,
     );
@@ -129,6 +120,7 @@ fn setup_scene(
     asset_server: Res<AssetServer>,
     global_seed: Res<GlobalSeed>,
     preset: Res<LandscapePreset>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<LandscapeState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
@@ -165,6 +157,7 @@ fn setup_scene(
         &mut materials,
         global_seed.0,
         *preset,
+        store.as_deref(),
         &mut state,
         orbit.as_deref_mut(),
     );
@@ -200,6 +193,10 @@ fn spawn_info_panel(commands: &mut Commands, asset_server: &AssetServer) {
 
 /// Перегенерировать ландшафт: убрать старый, сгенерировать новый из `seed`,
 /// подстроить камеру под габариты карты.
+///
+/// Пресет берётся случайно из выбранных в [`PresetStore`] (если плагин
+/// [`PresetSelectorPlugin`](bevy_utils::preset_selector::PresetSelectorPlugin)
+/// подключён); иначе — fallback на `preset`.
 #[allow(clippy::too_many_arguments)]
 fn regenerate_landscape(
     commands: &mut Commands,
@@ -207,6 +204,7 @@ fn regenerate_landscape(
     materials: &mut Assets<StandardMaterial>,
     seed: Seed,
     preset: LandscapePreset,
+    store: Option<&PresetStore>,
     state: &mut LandscapeState,
     orbit: Option<&mut OrbitCamera>,
 ) {
@@ -214,7 +212,7 @@ fn regenerate_landscape(
         commands.entity(root).despawn();
     }
 
-    let config: LandscapeConfig = resolve(preset, seed);
+    let config: LandscapeConfig = resolve_config(seed, preset, store);
     let landscape = generate(&config);
     let spawned = spawn_landscape(commands, meshes, materials, &landscape);
 
@@ -229,7 +227,22 @@ fn regenerate_landscape(
     state.landscape = Some(landscape);
     state.root = Some(spawned.root);
 
-    info!("Ландшафт сгенерирован: {preset:?}, seed = {seed}");
+    info!("Ландшафт сгенерирован: {}, seed = {seed}", config.label);
+}
+
+/// Конфигурация из случайно выбранного пресета (из файла `config.ron`),
+/// либо fallback на `resolve(preset, seed)`.
+fn resolve_config(seed: Seed, preset: LandscapePreset, store: Option<&PresetStore>) -> LandscapeConfig {
+    if let Some(store) = store {
+        if let Some(meta) = store.random() {
+            if let Some(mut config) = load_preset_config::<LandscapeConfig>(meta) {
+                config.seed = seed;
+                config.label = meta.name.clone();
+                return config;
+            }
+        }
+    }
+    resolve(preset, seed)
 }
 
 /// Обновить панель информации при смене ландшафта или вида.

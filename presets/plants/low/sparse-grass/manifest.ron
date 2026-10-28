@@ -1,0 +1,6 @@
+(
+    id: "sparse-grass",
+    name: "низкая трава",
+    description: "",
+    kind: "sparse-grass",
+)

@@ -30,6 +30,7 @@
 
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
+use generation_core::UiModalOpen;
 
 /// Режим управления камерой.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -201,7 +202,8 @@ impl Plugin for CameraPlugin {
         let radius = self.radius;
         let transform = orbit.transform();
 
-        app.insert_resource(CameraMode::default())
+        app.init_resource::<UiModalOpen>()
+            .insert_resource(CameraMode::default())
             .insert_resource(orbit)
             .insert_resource(FreeCamera::default())
             .insert_resource(CameraTransition::new(self.transition_seconds))
@@ -245,6 +247,7 @@ impl CameraTransition {
 
 /// `Tab` — переключение между орбитальной и свободной камерой.
 fn toggle_mode(
+    ui: Res<UiModalOpen>,
     keys: Res<ButtonInput<KeyCode>>,
     mut mode: ResMut<CameraMode>,
     mut orbit: ResMut<OrbitCamera>,
@@ -252,7 +255,7 @@ fn toggle_mode(
     mut transition: ResMut<CameraTransition>,
     camera: Query<&Transform, With<MainCamera>>,
 ) {
-    if !keys.just_pressed(KeyCode::Tab) || transition.active {
+    if ui.0 || !keys.just_pressed(KeyCode::Tab) || transition.active {
         return;
     }
 
@@ -330,6 +333,7 @@ fn camera_transition(
 
 /// Орбитальная камера: ЛКМ — вращение, колесо — приближение.
 fn orbit_input(
+    ui: Res<UiModalOpen>,
     mode: Res<CameraMode>,
     transition: Res<CameraTransition>,
     mut orbit: ResMut<OrbitCamera>,
@@ -338,7 +342,7 @@ fn orbit_input(
     mut wheel: MessageReader<MouseWheel>,
     mut camera: Query<&mut Transform, With<MainCamera>>,
 ) {
-    if *mode != CameraMode::Orbit || transition.active {
+    if ui.0 || *mode != CameraMode::Orbit || transition.active {
         motion.clear();
         wheel.clear();
         return;
@@ -375,6 +379,7 @@ fn orbit_input(
 
 /// Свободная камера: ПКМ — обзор, `WASD`/`QE` — движение, `Shift` — ускорение.
 fn free_input(
+    ui: Res<UiModalOpen>,
     mode: Res<CameraMode>,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -383,7 +388,7 @@ fn free_input(
     mut free: ResMut<FreeCamera>,
     mut camera: Query<&mut Transform, With<MainCamera>>,
 ) {
-    if *mode != CameraMode::Free {
+    if ui.0 || *mode != CameraMode::Free {
         motion.clear();
         return;
     }

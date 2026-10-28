@@ -1,0 +1,6 @@
+(
+    id: "plain",
+    name: "равнина",
+    description: "",
+    kind: "plain",
+)

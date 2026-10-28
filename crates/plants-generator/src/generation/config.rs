@@ -12,7 +12,7 @@ use bevy::ecs::resource::Resource;
 use generation_core::Seed;
 
 /// Тип растения — определяет, как именно строится объект и его крона.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum PlantType {
     /// Дерево: один заметный ствол и крона высоко над землёй.
     #[default]
@@ -39,13 +39,25 @@ impl PlantType {
 /// Обобщённый список пресетов, охватывающий деревья, кусты и траву: каждый
 /// пресет учитывает специфику своего типа (см. [`PlantPreset::plant_type`]),
 /// но разворачивается в одну и ту же [`PlantConfig`].
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum PlantPreset {
     /// Лиственное дерево: массивная крона из листьев на концах веток.
     #[default]
     DeciduousTree,
     /// Ель: хвойное дерево с выраженной конической кроной.
     Spruce,
+    /// Гибридная стилизация «Ель из старой программы»: очень высокая ель с
+    /// ярусами лап по всему стволу (CSV `local/plants/old/Ель.csv`).
+    Fir,
+    /// Сосна: высокий ствол с голым низом и негустой кроной-«зонтиком».
+    Pine,
+    /// Ива: короткий толстый ствол, широкая раскидистая плакучая крона.
+    Willow,
+    /// Пальма: голый ствол и крона-«фонтан» из крупных листьев на верхушке.
+    Palm,
+    /// Пальма с кокосами: плотнее крона и короткие коричневые «кокосы»
+    /// у основания кроны.
+    PalmCoconuts,
     /// Куст: густая листва от самой земли.
     Bush,
     /// Высокая густая трава (пышные пучки).
@@ -56,9 +68,14 @@ pub enum PlantPreset {
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 10] = [
         Self::DeciduousTree,
         Self::Spruce,
+        Self::Fir,
+        Self::Pine,
+        Self::Willow,
+        Self::Palm,
+        Self::PalmCoconuts,
         Self::Bush,
         Self::TallGrass,
         Self::SparseGrass,
@@ -69,6 +86,11 @@ impl PlantPreset {
         match self {
             Self::DeciduousTree => "лиственное дерево",
             Self::Spruce => "ель",
+            Self::Fir => "ель высокая",
+            Self::Pine => "сосна",
+            Self::Willow => "ива",
+            Self::Palm => "пальма",
+            Self::PalmCoconuts => "пальма с кокосами",
             Self::Bush => "куст",
             Self::TallGrass => "высокая трава",
             Self::SparseGrass => "низкая трава",
@@ -78,9 +100,33 @@ impl PlantPreset {
     /// Тип растения, к которому относится пресет.
     pub const fn plant_type(self) -> PlantType {
         match self {
-            Self::DeciduousTree | Self::Spruce => PlantType::Tree,
+            Self::DeciduousTree
+            | Self::Spruce
+            | Self::Fir
+            | Self::Pine
+            | Self::Willow
+            | Self::Palm
+            | Self::PalmCoconuts => PlantType::Tree,
             Self::Bush => PlantType::Bush,
             Self::TallGrass | Self::SparseGrass => PlantType::Grass,
+        }
+    }
+
+    /// Id пресета в каталоге `presets/plants` (id манифеста и имя папки
+    /// пресета). Единый источник для загрузки из RON (`resolve` → каталог
+    /// пресетов) и для записи пресетов (`examples/dump_presets.rs`).
+    pub const fn ron_id(self) -> &'static str {
+        match self {
+            Self::DeciduousTree => "deciduous-tree",
+            Self::Spruce => "spruce",
+            Self::Fir => "fir",
+            Self::Pine => "pine",
+            Self::Willow => "willow",
+            Self::Palm => "palm",
+            Self::PalmCoconuts => "palm-coconuts",
+            Self::Bush => "bush",
+            Self::TallGrass => "tall-grass",
+            Self::SparseGrass => "sparse-grass",
         }
     }
 
@@ -97,6 +143,11 @@ impl PlantPreset {
         match name.to_ascii_lowercase().as_str() {
             "deciduous" | "дерево" | "лиственное" => Some(Self::DeciduousTree),
             "spruce" | "ель" => Some(Self::Spruce),
+            "fir" | "ель высокая" | "высокая ель" => Some(Self::Fir),
+            "pine" | "сосна" => Some(Self::Pine),
+            "willow" | "ива" => Some(Self::Willow),
+            "palm" | "пальма" => Some(Self::Palm),
+            "palmcoconuts" | "пальма с кокосами" => Some(Self::PalmCoconuts),
             "bush" | "куст" => Some(Self::Bush),
             "tallgrass" | "высокая трава" | "трава" => Some(Self::TallGrass),
             "sparsegrass" | "низкая трава" => Some(Self::SparseGrass),
@@ -135,21 +186,21 @@ impl GenerationMode {
 }
 
 /// Способ построения кроны растения.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FoliageStyle {
     /// Плоские листья-ромбики на концах веток (дерево, куст).
     Leafy,
 }
 
 /// Куда навешивается крона.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FoliagePlacement {
     /// Только на концы терминальных веток уровня `min_level` и глубже.
     Terminal { min_level: usize },
 }
 
 /// Параметры кроны.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct FoliageConfig {
     /// Стиль кроны (листья).
     pub style: FoliageStyle,
@@ -172,7 +223,7 @@ pub struct FoliageConfig {
 }
 
 /// Параметры пучка травы.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct GrassConfig {
     /// Минимальная высота пучка, м.
     pub tuft_height_min: f32,
@@ -205,7 +256,7 @@ pub struct GrassConfig {
 /// Числа — диапазоны, из которых детерминированно от seed выбираются значения.
 /// Семантика радиуса: для уровня 0 — абсолютные метры; для более глубоких
 /// уровней — множитель к радиусу родительской ветки (после её сужения).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct BranchGen {
     /// Уровень в иерархии дерева.
     pub level: usize,
@@ -247,8 +298,46 @@ pub struct BranchGen {
     /// дрейфует в одну сторону (иначе крона закручивается спиралью).
     pub first_child_index: usize,
 
+    /// Дети — строго подряд от `first_child_index` (первые `children` веток),
+    /// как в старой программе. Нужно для деревьев из старых CSV: там первая
+    /// ветка окна — «продолжение ствола/ветки», и случайный выбор из окна
+    /// (см. `grow`) слишком часто её теряет, из-за чего дерево обрывается.
+    /// Для пресетов нового движка (с окном-перемешиванием) — `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub consecutive_children: bool,
+
     /// Число граней меша сегмента ветки.
     pub mesh_sides: usize,
+
+    /// Тапер — независимый множитель сегмента (как в старой программе:
+    /// `minTaper..maxTaper` берётся как есть, не умножается на тапер родителя).
+    /// Движок по умолчанию накапливает тапер (`taper × parent_taper`) — для
+    /// старых CSV-деревьев с 30–40 уровнями это квадратично схлопывает радиус
+    /// кроны до нуля. Для таких деревьев — `true`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub independent_taper: bool,
+
+    /// Ограничение длины сегмента в метрах (после умножения на родителя).
+    /// Нужно для старых CSV-деревьев, где конусы-«иглы» нижних уровней
+    /// раздуваются до брёвен, а на верхушке превращаются в крошки — клэмп
+    /// сглаживает уменьшение размера от уровня к уровню. `None` — без
+    /// ограничения.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length_clamp: Option<(f32, f32)>,
+
+    /// То же для нижнего радиуса сегмента (в метрах).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius_clamp: Option<(f32, f32)>,
+
+    /// Собственный цвет сегмента (для старых CSV-деревьев, где ствол и крона
+    /// окрашены по-разному). `None` — использовать [`PlantConfig::branch_color`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+}
+
+/// Для `skip_serializing_if` (не сериализуем `consecutive_children: false`).
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl BranchGen {
@@ -271,6 +360,11 @@ impl BranchGen {
             children_max: 3,
             first_child_index: 0,
             mesh_sides: 8,
+            consecutive_children: false,
+            independent_taper: false,
+            length_clamp: None,
+            radius_clamp: None,
+            color: None,
         }
     }
 }
@@ -279,7 +373,11 @@ impl BranchGen {
 pub type BranchLevels = Vec<Vec<BranchGen>>;
 
 /// Полностью развёрнутая конфигурация генерации растения.
-#[derive(Resource, Debug, Clone)]
+///
+/// Пресеты хранятся как сериализованные [`PlantConfig`] в `config.ron`
+/// (папки `presets/plants/...`): генератор читает файл и строит по нему
+/// объект.
+#[derive(Resource, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PlantConfig {
     /// Глобальный seed — вся случайность (включая ветки, крону, расстановку)
     /// детерминирована от него.

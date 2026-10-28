@@ -1,0 +1,6 @@
+(
+    id: "deciduous-tree",
+    name: "лиственное дерево",
+    description: "",
+    kind: "deciduous-tree",
+)

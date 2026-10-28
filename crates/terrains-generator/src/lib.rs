@@ -4,5 +4,5 @@ pub mod preset;
 pub mod scene;
 
 pub use placement::{PlacedObject, PlacementMap, PlacementRules};
-pub use preset::TerrainPreset;
-pub use scene::{PlacedBuilding, RoadCorridor, TerrainScene, generate};
+pub use preset::{TerrainPreset, TerrainPresetData};
+pub use scene::{PlacedBuilding, RoadCorridor, TerrainScene, generate, generate_from_data};

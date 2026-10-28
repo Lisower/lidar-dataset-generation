@@ -1,0 +1,6 @@
+(
+    id: "water",
+    name: "Водные",
+    description: "",
+    is_group: true,
+)

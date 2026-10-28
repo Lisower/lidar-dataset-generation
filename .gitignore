@@ -20,6 +20,9 @@
 *.ply
 *.pcd
 
+# --- Локальные выборы демо-пресетов (генерируются в рантайме) ---
+/crates/*/settings/
+
 # --- Локальные настройки Obsidian ---
 wiki/.obsidian/workspace.json
 wiki/.obsidian/workspace-mobile.json

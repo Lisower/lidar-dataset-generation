@@ -1,0 +1,6 @@
+(
+    id: "village",
+    name: "Село",
+    description: "",
+    kind: "village",
+)

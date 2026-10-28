@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use super::regeneration::RegenerationRequest;
 use super::view_modes::{ViewMode, ViewModeToggle};
+use crate::UiModalOpen;
 use crate::seeds::{GlobalSeed, Seed};
 
 /// Плагин общих горячих клавиш генератора.
@@ -32,7 +33,8 @@ impl Default for GenerationControlsPlugin {
 
 impl Plugin for GenerationControlsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GlobalSeed(self.initial_seed))
+        app.init_resource::<UiModalOpen>()
+            .insert_resource(GlobalSeed(self.initial_seed))
             .insert_resource(ViewMode::default())
             .add_message::<RegenerationRequest>()
             .add_message::<ViewModeToggle>()
@@ -42,10 +44,11 @@ impl Plugin for GenerationControlsPlugin {
 
 /// `R` / `Shift + R`.
 fn handle_regeneration_key(
+    ui: Res<UiModalOpen>,
     keys: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<RegenerationRequest>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyR) {
+    if ui.0 || !keys.just_pressed(KeyCode::KeyR) {
         return;
     }
     if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
@@ -59,12 +62,14 @@ fn handle_regeneration_key(
 
 /// `V` — смена режима отображения.
 fn handle_view_mode_key(
+    ui: Res<UiModalOpen>,
     keys: Res<ButtonInput<KeyCode>>,
     mut view_mode: ResMut<ViewMode>,
     mut writer: MessageWriter<ViewModeToggle>,
 ) {
-    if keys.just_pressed(KeyCode::KeyV) {
-        *view_mode = view_mode.toggled();
-        writer.write(ViewModeToggle);
+    if ui.0 || !keys.just_pressed(KeyCode::KeyV) {
+        return;
     }
+    *view_mode = view_mode.toggled();
+    writer.write(ViewModeToggle);
 }

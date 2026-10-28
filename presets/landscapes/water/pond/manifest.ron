@@ -1,0 +1,6 @@
+(
+    id: "pond",
+    name: "пруд",
+    description: "",
+    kind: "pond",
+)

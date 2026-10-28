@@ -5,8 +5,10 @@
 
 pub mod controls;
 pub mod regeneration;
+pub mod ui_lock;
 pub mod view_modes;
 
 pub use controls::GenerationControlsPlugin;
 pub use regeneration::RegenerationRequest;
+pub use ui_lock::UiModalOpen;
 pub use view_modes::{ViewMode, ViewModeToggle};

@@ -1,0 +1,6 @@
+(
+    id: "forest-cabin",
+    name: "Лесная избушка",
+    description: "",
+    kind: "forest-cabin",
+)

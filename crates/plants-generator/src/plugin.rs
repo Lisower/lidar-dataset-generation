@@ -5,13 +5,16 @@
 //!
 //! - `R` / `Shift + R` ([`RegenerationRequest`]) — перегенерация;
 //! - `V` ([`ViewMode`]) — переключение «визуальные модели / облако точек»;
-//! - `P` — следующий пресет растения (дерево → хвойное → куст → трава...);
-//! - `M` — переключение режима генерации: одиночный / множественный.
+//! - `M` — переключение режима генерации: одиночный / множественный;
+//! - `Ctrl+S` — окно выбора демо-пресетов (устанавливает
+//!   [`PresetSelectorPlugin`](bevy_utils::preset_selector::PresetSelectorPlugin)).
 //!
 //! Управление `V`/`R` обеспечивает
 //! [`GenerationControlsPlugin`](generation_core::GenerationControlsPlugin);
 //! этот плагин лишь реагирует на его сообщения и ресурсы (`GlobalSeed`,
-//! [`ViewMode`]), а `P` и `M` обрабатывает сам.
+//! [`ViewMode`]), а `M` обрабатывает сам. Демонстрационный пресет выбирается
+//! истинно случайно из выбранных в [`PresetStore`]; при отсутствии плагина
+//! пресетов — fallback на [`PlantPreset`].
 
 use bevy::asset::Assets;
 use bevy::mesh::Mesh;
@@ -23,14 +26,14 @@ use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
 use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
 use generation_core::seeds::GlobalSeed;
-use generation_core::{PointClass, PointCloud, Seed, ViewMode};
+use generation_core::{load_preset_config, PointClass, PointCloud, Seed, ViewMode, PresetStore};
 
 use crate::generation::{GenerationMode, PlantConfig, PlantPreset, PlantScene, resolve};
 use crate::visual::{PointCloudEntity, VisualMesh, spawn_plant_scene};
 
 /// Подсказка об управлении.
 const HELP: &str =
-    "[P] пресет  ·  [M] режим  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
+    "[Ctrl+S] пресеты  ·  [M] режим  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
 
 /// Состояние текущей сцены растений.
 #[derive(Resource, Default)]
@@ -71,7 +74,6 @@ impl Plugin for PlantsPlugin {
             .add_systems(
                 Update,
                 (
-                    cycle_preset,
                     toggle_generation_mode,
                     regenerate,
                     update_info,
@@ -80,19 +82,6 @@ impl Plugin for PlantsPlugin {
                 )
                     .chain(),
             );
-    }
-}
-
-/// `P` — следующий пресет растения, перегенерировать с тем же seed.
-fn cycle_preset(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut preset: ResMut<PlantPreset>,
-    mut writer: MessageWriter<RegenerationRequest>,
-) {
-    if keys.just_pressed(KeyCode::KeyP) {
-        *preset = preset.next();
-        // Тот же seed — удобно сравнивать пресеты на одной «местности».
-        writer.write(RegenerationRequest::same());
     }
 }
 
@@ -119,6 +108,7 @@ fn regenerate(
     mut materials: ResMut<Assets<StandardMaterial>>,
     preset: Res<PlantPreset>,
     mode: Res<GenerationMode>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<PlantsState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
@@ -141,6 +131,7 @@ fn regenerate(
         global_seed.0,
         *preset,
         *mode,
+        store.as_deref(),
         &mut state,
         orbit,
     );
@@ -156,6 +147,7 @@ fn setup_scene(
     global_seed: Res<GlobalSeed>,
     preset: Res<PlantPreset>,
     mode: Res<GenerationMode>,
+    store: Option<Res<PresetStore>>,
     mut state: ResMut<PlantsState>,
     mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
@@ -215,6 +207,7 @@ fn setup_scene(
         global_seed.0,
         *preset,
         *mode,
+        store.as_deref(),
         &mut state,
         orbit.as_deref_mut(),
     );
@@ -250,6 +243,10 @@ fn spawn_info_panel(commands: &mut Commands, asset_server: &AssetServer) {
 
 /// Перегенерировать сцену растений: убрать старую, сгенерировать новую
 /// из `seed` и подстроить камеру под габариты сцены.
+///
+/// Пресет берётся случайно из выбранных в [`PresetStore`] (если подключён
+/// [`PresetSelectorPlugin`](bevy_utils::preset_selector::PresetSelectorPlugin)),
+/// иначе — fallback на `preset`.
 #[allow(clippy::too_many_arguments)]
 fn regenerate_plants(
     commands: &mut Commands,
@@ -258,6 +255,7 @@ fn regenerate_plants(
     seed: Seed,
     preset: PlantPreset,
     mode: GenerationMode,
+    store: Option<&PresetStore>,
     state: &mut PlantsState,
     orbit: Option<&mut OrbitCamera>,
 ) {
@@ -265,7 +263,7 @@ fn regenerate_plants(
         commands.entity(root).despawn();
     }
 
-    let config: PlantConfig = resolve(preset, seed);
+    let config: PlantConfig = resolve_config(seed, preset, store);
     let scene = PlantScene::generate(&config, mode);
     let spawned = spawn_plant_scene(commands, meshes, materials, &scene);
 
@@ -280,6 +278,24 @@ fn regenerate_plants(
     state.root = Some(spawned.root);
 
     info!("Сцена растений сгенерирована: seed = {seed}");
+}
+
+/// Конфигурация из случайно выбранного пресета (из файла `config.ron`),
+/// либо fallback на `resolve(preset, seed)`.
+fn resolve_config(
+    seed: Seed,
+    preset: PlantPreset,
+    store: Option<&PresetStore>,
+) -> PlantConfig {
+    if let Some(store) = store {
+        if let Some(meta) = store.random() {
+            if let Some(mut config) = load_preset_config::<PlantConfig>(meta) {
+                config.seed = seed;
+                return config;
+            }
+        }
+    }
+    resolve(preset, seed)
 }
 
 /// Обновить панель информации при смене сцены, режима или вида.

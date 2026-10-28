@@ -1,0 +1,6 @@
+(
+    id: "low",
+    name: "Трава",
+    description: "",
+    is_group: true,
+)

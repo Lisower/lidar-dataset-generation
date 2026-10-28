@@ -1,0 +1,21 @@
+(
+    seed: (0),
+    label: "склон",
+    size_m: 100.0,
+    resolution: 0.5,
+    base: (
+        z0: 13.51256,
+        gx: 0.0,
+        gy: -0.24831402,
+    ),
+    water_level: None,
+    features: [],
+    noise: (
+        octaves: 6,
+        frequency: 0.104157016,
+        lacunarity: 2.0,
+        persistence: 0.5,
+        amplitude: 0.72454923,
+    ),
+    point_jitter: 0.03,
+)

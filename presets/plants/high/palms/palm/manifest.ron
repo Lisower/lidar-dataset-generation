@@ -1,0 +1,6 @@
+(
+    id: "palm",
+    name: "пальма",
+    description: "",
+    kind: "palm",
+)

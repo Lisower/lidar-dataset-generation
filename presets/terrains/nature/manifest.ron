@@ -1,0 +1,6 @@
+(
+    id: "nature",
+    name: "Природные",
+    description: "",
+    is_group: true,
+)

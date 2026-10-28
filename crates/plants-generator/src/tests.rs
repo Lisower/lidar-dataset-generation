@@ -180,6 +180,125 @@ fn branches_respect_limit() {
     );
 }
 
+/// Хвойные перенесены из старых CSV: высокий ствол + крона из зелёных
+/// конусов-«игл» таблицы (коричневые ветки + зелёные сегменты; отдельной
+/// листвы нет — `leaf_count` = 0, крону дают зелёные сегменты).
+#[test]
+fn conifers_have_high_trunk_and_green_crown() {
+    for preset in [PlantPreset::Fir, PlantPreset::Pine] {
+        for seed in 0..4u64 {
+            let config: PlantConfig = resolve(preset, Seed::new(seed));
+            let skeleton = crate::generation::PlantSkeleton::build(&config);
+            // Есть и коричневый (ствол/ветки), и зелёный (крона) сегменты.
+            let mut brown = 0usize;
+            let mut green = 0usize;
+            for seg in &skeleton.segments {
+                let end = skeleton.points[seg.to];
+                let color = config
+                    .branches
+                    .get(end.level)
+                    .and_then(|lv| lv.get(end.branch_id))
+                    .and_then(|b| b.color)
+                    .unwrap_or(config.branch_color);
+                let c = color.to_srgba();
+                if c.red > c.green && c.red > c.blue {
+                    brown += 1;
+                } else {
+                    green += 1;
+                }
+            }
+            assert!(brown > 0, "{preset:?} seed={seed}: нет коричневых веток");
+            assert!(green > 0, "{preset:?} seed={seed}: нет зелёной кроны");
+
+            let s = scene(preset, seed, GenerationMode::Single);
+            let plant = &s.plants[0].plant;
+            let min_height = if preset == PlantPreset::Fir { 4.0 } else { 12.0 };
+            assert!(
+                plant.height > min_height,
+                "{preset:?} seed={seed}: рост {:.1} — хвойное должно быть высоким",
+                plant.height
+            );
+            assert!(plant.extent > 1.0, "{preset:?} seed={seed}: крона почти без размаха");
+            assert!(
+                plant.extent < plant.height,
+                "{preset:?} seed={seed}: крона шире, чем дерево высоким"
+            );
+            // Крона читается и в облаке точек.
+            assert!(
+                s.cloud_points > 1000,
+                "{preset:?} seed={seed}: слишком мало точек ({})",
+                s.cloud_points
+            );
+        }
+    }
+}
+
+/// Ива — широкая плакучая крона с густой листвой на свисающих прядях.
+#[test]
+fn willow_is_wide_and_leafy() {
+    for seed in 0..4u64 {
+        let s = scene(PlantPreset::Willow, seed, GenerationMode::Single);
+        let plant = &s.plants[0].plant;
+        assert!(
+            plant.extent > 6.0,
+            "seed={seed}: ива не раскидистая ({:.1})",
+            plant.extent
+        );
+        assert!(plant.height < 30.0, "seed={seed}: слишком высокая ива");
+        assert!(
+            plant.leaf_count > 200,
+            "seed={seed}: мало листвы ({})",
+            plant.leaf_count
+        );
+    }
+}
+
+/// Пальмы — голый ствол с кроной-«фонтаном» на верхушке: веток немного
+/// (ствол + линейные цепочки вай, все уровни таблицы до конца); крону образуют
+/// сами зелёные вайи — отдельной листвы (leaf_count) нет.
+#[test]
+fn palms_have_bare_trunk_and_top_crown() {
+    for preset in [PlantPreset::Palm, PlantPreset::PalmCoconuts] {
+        for seed in 0..4u64 {
+            let config: PlantConfig = resolve(preset, Seed::new(seed));
+            let skeleton = crate::generation::PlantSkeleton::build(&config);
+            assert!(
+                skeleton.segments.len() < 1200,
+                "{preset:?} seed={seed}: слишком много веток для пальмы ({})",
+                skeleton.segments.len()
+            );
+            // Крону дают зелёные вайи (коричневый — только ствол и кокосы).
+            let mut green = 0usize;
+            for seg in &skeleton.segments {
+                let end = skeleton.points[seg.to];
+                let color = config
+                    .branches
+                    .get(end.level)
+                    .and_then(|lv| lv.get(end.branch_id))
+                    .and_then(|b| b.color)
+                    .unwrap_or(config.branch_color);
+                let c = color.to_srgba();
+                if c.green > c.red && c.green > c.blue {
+                    green += 1;
+                }
+            }
+            assert!(
+                green > 0,
+                "{preset:?} seed={seed}: нет зелёной кроны-фонтана"
+            );
+            let s = scene(preset, seed, GenerationMode::Single);
+            let plant = &s.plants[0].plant;
+            assert!(plant.height > 8.0, "{preset:?} seed={seed}: низкая");
+            assert!(plant.extent > 2.0, "{preset:?} seed={seed}: нет кроны");
+            // Отдельная листва отключена — крона только из зелёных сегментов.
+            assert_eq!(
+                plant.leaf_count, 0,
+                "{preset:?} seed={seed}: листва на кончиках не нужна"
+            );
+        }
+    }
+}
+
 #[test]
 fn grass_tuft_has_blades_and_cloud() {
     for preset in [PlantPreset::TallGrass, PlantPreset::SparseGrass] {

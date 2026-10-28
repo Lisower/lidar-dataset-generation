@@ -1,0 +1,6 @@
+(
+    id: "tall-grass",
+    name: "высокая трава",
+    description: "",
+    kind: "tall-grass",
+)

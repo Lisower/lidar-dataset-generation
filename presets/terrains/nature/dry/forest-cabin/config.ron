@@ -1,0 +1,14 @@
+(
+    seed: (12648430),
+    name: "forest-cabin",
+    landscape_id: "plain",
+    tree_id: "deciduous-tree",
+    bush_id: "bush",
+    grass_id: "tall-grass",
+    building_id: "cabin",
+    trees: 31,
+    bushes: 30,
+    grass: 160,
+    buildings: 1,
+    max_slope_deg: 10.0,
+)

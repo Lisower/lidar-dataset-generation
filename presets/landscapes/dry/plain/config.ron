@@ -1,0 +1,21 @@
+(
+    seed: (0),
+    label: "равнина",
+    size_m: 100.0,
+    resolution: 0.5,
+    base: (
+        z0: 4.629348,
+        gx: 0.0,
+        gy: 0.0,
+    ),
+    water_level: None,
+    features: [],
+    noise: (
+        octaves: 6,
+        frequency: 0.093822464,
+        lacunarity: 2.0,
+        persistence: 0.5,
+        amplitude: 0.83493245,
+    ),
+    point_jitter: 0.03,
+)

@@ -1,0 +1,6 @@
+(
+    id: "decidious",
+    name: "Лиственные",
+    description: "",
+    is_group: true,
+)

@@ -1,0 +1,6 @@
+(
+    id: "annex",
+    name: "House with annex",
+    description: "",
+    kind: "annex",
+)

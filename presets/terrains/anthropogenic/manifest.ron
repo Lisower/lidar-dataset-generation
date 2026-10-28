@@ -1,0 +1,6 @@
+(
+    id: "anthropogenic",
+    name: "Антропогенные",
+    description: "",
+    is_group: true,
+)
