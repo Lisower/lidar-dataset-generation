@@ -33,6 +33,8 @@ pub struct Foliage {
 pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage {
     if config.preset == PlantPreset::Spruce {
         build_spruce_needles(skeleton, config)
+    } else if config.preset == PlantPreset::Juniper {
+        build_juniper_needles(skeleton, config)
     } else {
         build_leafy(skeleton, config)
     }
@@ -118,7 +120,7 @@ fn build_spruce_needles(
                 // Так хвоя образует объём вокруг еловой лапы,
                 // а коричневая ветка меньше просматривается.
                 let foliage_radius =
-                    rng.random_range(0.025..=0.07);
+                    rng.random_range(0.015..=0.045);
 
                 let needle_center =
                     center + radial * foliage_radius;
@@ -142,6 +144,118 @@ fn build_spruce_needles(
                     c0, c1, c2, c3,
                 ));
 
+                foliage.cloud.push(c0);
+                foliage.cloud.push(needle_center);
+
+                foliage.count += 1;
+            }
+        }
+    }
+
+    foliage
+}
+
+/// Хвоя можжевельника.
+///
+/// Короткие густые иглы располагаются по всей длине ветвей,
+/// формируя плотную объёмную крону и скрывая большую часть скелета.
+fn build_juniper_needles(
+    skeleton: &PlantSkeleton,
+    config: &PlantConfig,
+) -> Foliage {
+    let mut rng = config.seed.with_label("juniper_needles").rng();
+    let mut foliage = Foliage::default();
+
+    for segment in &skeleton.segments {
+        let from = skeleton.points[segment.from];
+        let to = skeleton.points[segment.to];
+
+        let branch = to.position - from.position;
+        let length = branch.length();
+
+        if length <= 0.001 {
+            continue;
+        }
+
+        let dir = branch.normalize();
+
+        // Расставляем точки с хвоей достаточно часто по всей ветке.
+        // На длинных основных побегах их больше, на коротких — меньше.
+        let anchors = ((length / 0.035).ceil() as usize).clamp(4, 40);
+
+        for anchor_index in 0..anchors {
+            let t =
+                (anchor_index as f32 + 0.5) / anchors as f32;
+
+            let center = from.position + branch * t;
+
+            // Строим базис вокруг направления ветки.
+            let up = Vec3::Z;
+            let side0 = dir.cross(up).normalize_or_zero();
+
+            let side0 = if side0 == Vec3::ZERO {
+                Vec3::X
+            } else {
+                side0
+            };
+
+            let pitch =
+                dir.cross(side0).normalize_or_zero();
+
+            // Несколько коротких игл вокруг каждой точки ветви.
+            for needle_index in 0..8 {
+                let angle =
+                    needle_index as f32
+                        * std::f32::consts::TAU
+                        / 8.0
+                        + rng.random_range(-0.30_f32..=0.30_f32);
+
+                let radial =
+                    side0 * angle.cos()
+                        + pitch * angle.sin();
+
+                // Игла смотрит преимущественно наружу,
+                // но немного направлена вдоль самой ветви.
+                let needle_dir =
+                    (radial * 0.90 + dir * 0.20)
+                        .normalize_or_zero();
+
+                // Короткая мелкая хвоя можжевельника.
+                let needle_length =
+                    rng.random_range(0.07_f32..=0.11_f32);
+
+                let needle_width =
+                    rng.random_range(0.012_f32..=0.020_f32);
+
+                // Немного отодвигаем хвою от оси ветки,
+                // чтобы зелень образовывала объёмный слой.
+                let foliage_radius =
+                    rng.random_range(0.015_f32..=0.045_f32);
+
+                let needle_center =
+                    center + radial * foliage_radius;
+
+                let tip =
+                    needle_center + needle_dir * needle_length;
+
+                let c0 = tip;
+                let c1 =
+                    needle_center + side0 * needle_width;
+                let c2 =
+                    needle_center
+                        - needle_dir * needle_length * 0.18;
+                let c3 =
+                    needle_center - side0 * needle_width;
+
+                let [c0, c1, c2, c3] =
+                    on_ground([c0, c1, c2, c3]);
+
+                foliage.faces.push(Polygon::quad(
+                    c0, c1, c2, c3,
+                ));
+
+                // Две точки на каждую иглу дают достаточно плотное
+                // облако без чрезмерного увеличения его размера.
                 foliage.cloud.push(c0);
                 foliage.cloud.push(needle_center);
 

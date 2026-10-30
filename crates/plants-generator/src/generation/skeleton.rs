@@ -64,6 +64,9 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::Spruce {
             return Self::build_spruce(config);
         }
+        if config.preset == PlantPreset::Juniper {
+            return Self::build_juniper(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -308,6 +311,240 @@ impl PlantSkeleton {
 
                 previous_trunk_point = trunk_point;
             }
+
+            Self::finish(&mut skeleton);
+            skeleton
+        }
+
+        /// Специальное построение можжевельника:
+        /// низкий раскидистый куст с несколькими основными побегами
+        /// и большим количеством коротких боковых веточек.
+        fn build_juniper(config: &PlantConfig) -> Self {
+            let mut rng = config.seed.with_label("juniper_skeleton").rng();
+            let mut skeleton = Self::default();
+
+            // Центральная точка у земли.
+            skeleton.points.push(SkeletonPoint {
+                position: Vec3::ZERO,
+                level: 0,
+                branch_id: 0,
+                radius: 0.0,
+                taper: 1.0,
+                children_count: 0,
+            });
+
+            // Основные побеги расходятся от центра.
+            let main_count = rng.random_range(16usize..=20usize);
+
+            for main_index in 0..main_count {
+                let azimuth =
+                    main_index as f32 * (360.0 / main_count as f32)
+                        + rng.random_range(-8.0..=8.0);
+
+                // Основные побеги длинные и почти горизонтальные.
+                let branch_length: f32 = rng.random_range(1.10..=1.35);
+
+                // Конец основного побега находится примерно на высоте 30–60 см.
+                let branch_height: f32 = rng.random_range(0.38..=0.75);
+
+                let horizontal_length: f32 =
+                    (branch_length * branch_length - branch_height * branch_height).sqrt();
+
+                let h: f32 = azimuth.to_radians();
+
+                // Основные побеги начинаются не строго из одной точки:
+                // небольшое смещение основания формирует плотную естественную середину куста.
+                let base_radius: f32 = rng.random_range(0.0_f32..=0.18_f32);
+                let base_angle: f32 = rng.random_range(0.0_f32..=std::f32::consts::TAU);
+
+                let start_position = Vec3::new(
+                    base_radius * base_angle.cos(),
+                    base_radius * base_angle.sin(),
+                    rng.random_range(0.0_f32..=0.06_f32),
+                );
+
+                let end_position: Vec3 = start_position
+                    + Vec3::new(
+                        horizontal_length * h.cos(),
+                        horizontal_length * h.sin(),
+                        branch_height,
+                    );
+                let base_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: start_position,
+                    level: 0,
+                    branch_id: main_index + 1,
+                    radius: rng.random_range(0.018..=0.032),
+                    taper: 0.88,
+                    children_count: 1,
+                });
+
+                let main_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: end_position,
+                    level: 1,
+                    branch_id: main_index + 1,
+                    radius: rng.random_range(0.015..=0.028),
+                    taper: 0.82,
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from: base_idx,
+                    to: main_idx,
+                });
+
+                // По всей длине основного побега располагаются боковые веточки.
+                let side_count = rng.random_range(14usize..=18usize);
+                let mut children = 0usize;
+
+                for side_index in 1..=side_count {
+                    if skeleton.points.len() >= config.max_branches {
+                        break;
+                    }
+
+                    let along =
+                        side_index as f32 / (side_count + 1) as f32;
+
+                    // Место крепления боковой веточки.
+                    let attach_position =
+                        start_position + (end_position - start_position) * along;
+
+                    let attach_idx = skeleton.points.len();
+
+                    skeleton.points.push(SkeletonPoint {
+                        position: attach_position,
+                        level: 1,
+                        branch_id: main_index + 1,
+                        radius: 0.018,
+                        taper: 0.78,
+                        children_count: 1,
+                    });
+
+                    skeleton.segments.push(SkeletonSegment {
+                        from: 0,
+                        to: attach_idx,
+                    });
+
+                    // Из каждой точки растут две боковые веточки:
+                    // по обе стороны основного побега.
+                    for side_sign in [-1.0_f32, 1.0_f32] {
+                        if skeleton.points.len() >= config.max_branches {
+                            break;
+                        }
+
+                        let side_angle =
+                            azimuth
+                                + side_sign * rng.random_range(35.0..=70.0)
+                                + rng.random_range(-10.0..=10.0);
+
+                        // В середине куста веточки немного длиннее,
+                        // ближе к краям становятся короче.
+                        let centre_factor =
+                            1.0 - ((along - 0.55).abs() * 1.3).min(0.65);
+
+                        let side_length =
+                            rng.random_range(0.30..=0.55) * centre_factor;
+
+                        let side_height =
+                            rng.random_range(0.04..=0.16);
+
+                        let side_horizontal =
+                            (side_length * side_length - side_height * side_height)
+                                .max(0.0)
+                                .sqrt();
+
+                        let sh = side_angle.to_radians();
+
+                        let side_end = attach_position
+                            + Vec3::new(
+                                side_horizontal * sh.cos(),
+                                side_horizontal * sh.sin(),
+                                side_height,
+                            );
+
+                        let side_idx = skeleton.points.len();
+
+                        skeleton.points.push(SkeletonPoint {
+                            position: side_end,
+                            level: 2,
+                            branch_id: side_index,
+                            radius: rng.random_range(0.008..=0.016),
+                            taper: 0.72,
+                            children_count: 0,
+                        });
+
+                        skeleton.segments.push(SkeletonSegment {
+                            from: attach_idx,
+                            to: side_idx,
+                        });
+
+                        children += 1;
+                    }
+                }
+
+                skeleton.points[main_idx].children_count = children;
+            }
+            
+            // Внутренний ярус можжевельника.
+            // Короткие наклонные побеги перекрывают центр куста,
+            // не образуя вертикального пучка.
+            let inner_count = rng.random_range(18usize..=24usize);
+
+            for inner_index in 0..inner_count {
+                if skeleton.points.len() >= config.max_branches {
+                    break;
+                }
+
+                // Сдвигаем внутренние побеги относительно внешних,
+                // чтобы они попадали в промежутки между основными лапами.
+                let azimuth =
+                    inner_index as f32 * (360.0 / inner_count as f32)
+                        + 360.0 / inner_count as f32 * 0.5
+                        + rng.random_range(-18.0_f32..=18.0_f32);
+
+                // Внутренние лапы заметно короче внешних.
+                let branch_length =
+                    rng.random_range(0.28_f32..=0.50_f32);
+
+                // Они слегка приподняты, но остаются наклонными,
+                // а не превращаются в вертикальные стволики.
+                let branch_height =
+                    rng.random_range(0.30_f32..=0.50_f32);
+
+                let horizontal_length =
+                    (branch_length * branch_length
+                        - branch_height * branch_height)
+                        .sqrt();
+
+                let h = azimuth.to_radians();
+
+                let end_position = Vec3::new(
+                    horizontal_length * h.cos(),
+                    horizontal_length * h.sin(),
+                    branch_height,
+                );
+
+                let inner_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: end_position,
+                    level: 1,
+                    branch_id: main_count + inner_index + 1,
+                    radius: rng.random_range(0.018_f32..=0.030_f32),
+                    taper: 0.78,
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from: 0,
+                    to: inner_idx,
+                });
+            }
+
+            skeleton.points[0].children_count = main_count + inner_count;
 
             Self::finish(&mut skeleton);
             skeleton
