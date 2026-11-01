@@ -209,7 +209,7 @@ impl ScanScene {
                 );
                 cloud.points.push(Point::new(
                     self.cloud.points[index].position + offset,
-                    PointClass::Noise,
+                    PointClass::LowNoise,
                 ));
             }
         }

@@ -122,7 +122,7 @@ impl Demo {
                 .points
                 .iter()
                 .map(|point| {
-                    if point.class == PointClass::Noise {
+                    if point.class == PointClass::LowNoise {
                         [1.0, 0.55, 0.05, 1.0]
                     } else {
                         let c = point.class.color().to_srgba();
@@ -160,7 +160,7 @@ impl Demo {
         let mut positions: Vec<[f32; 3]> =
             self.scene.cloud.positions().map(|p| p.to_array()).collect();
         for point in &self.result().points {
-            if point.class == PointClass::Noise {
+            if point.class == PointClass::LowNoise {
                 positions.push(point.position.to_array());
                 colors.push([1.0, 0.55, 0.05, 1.0]);
             }
@@ -182,7 +182,7 @@ pub fn validate_options(options: &DemoOptions) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Только измеренные точки, без серого контекста. Класс Noise = 7 (Low Noise).
+/// Только измеренные точки, без серого контекста. Класс LowNoise = 7.
 pub fn export_ply(cloud: &PointCloud, path: impl AsRef<Path>) -> std::io::Result<()> {
     let path = path.as_ref();
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -199,7 +199,7 @@ pub fn export_ply(cloud: &PointCloud, path: impl AsRef<Path>) -> std::io::Result
             PointClass::Ground => 2,
             PointClass::Vegetation => 5,
             PointClass::Building => 6,
-            PointClass::Noise => 7,
+            PointClass::LowNoise => 7,
             PointClass::Water => 9,
             PointClass::Other => 1,
         };
@@ -423,7 +423,7 @@ fn refresh(
             demo.result()
                 .points
                 .iter()
-                .filter(|p| p.class == PointClass::Noise)
+                .filter(|p| p.class == PointClass::LowNoise)
                 .count(),
             if demo.show_context {
                 "всё облако"
@@ -534,7 +534,7 @@ mod tests {
                 demo.result()
                     .points
                     .iter()
-                    .filter(|p| p.class == PointClass::Noise)
+                    .filter(|p| p.class == PointClass::LowNoise)
                     .count()
             );
         };

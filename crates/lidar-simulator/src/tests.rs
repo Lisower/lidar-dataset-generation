@@ -1,5 +1,7 @@
 use super::*;
 
+use std::path::Path;
+
 fn cloud(positions: &[Vec3]) -> PointCloud {
     let mut cloud = PointCloud::new(PointClass::Building);
     cloud.extend_with_class(positions.iter().copied(), PointClass::Building);
@@ -106,7 +108,7 @@ fn low_noise_is_added_reproducibly_and_does_not_replace_returns() {
     assert_eq!(a.cloud.len(), 4);
     assert_eq!(a.cloud.points[..2], scene.cloud.points);
     for (noise, source) in a.cloud.points[2..].iter().zip(&scene.cloud.points) {
-        assert_eq!(noise.class, PointClass::Noise);
+        assert_eq!(noise.class, PointClass::LowNoise);
         assert!((noise.position - source.position).abs().max_element() <= cfg.noise_extent);
     }
     let clean = scene.scan(front(), &config(), Seed(42)).unwrap();
@@ -120,7 +122,7 @@ fn low_noise_is_added_reproducibly_and_does_not_replace_returns() {
             .cloud
             .points
             .iter()
-            .filter(|p| p.class == PointClass::Noise)
+            .filter(|p| p.class == PointClass::LowNoise)
             .count(),
         4
     );
@@ -356,7 +358,15 @@ fn invalid_settings_are_errors() {
 
 #[test]
 fn headless_single_frame_exports_ply_without_context_points() {
-    let path = std::env::temp_dir().join(format!("lidar-scan-test-{}.ply", std::process::id()));
+    // Временная папка теста — в `target/` воркспейса: системный TEMP в этой
+    // среде может быть недоступен для записи (см. generation-core/presets).
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("lidar-sim-tests");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("scan-{}.ply", std::process::id()));
     demo::run_headless(demo::DemoOptions {
         source_step: 0.3,
         frames: 1,

@@ -19,7 +19,7 @@ pub enum PointClass {
     /// Вода.
     Water,
     /// Ложно отражённые / шумовые точки.
-    Noise,
+    LowNoise,
     /// Прочее (не задействовано в конкретной генерации).
     Other,
 }
@@ -32,8 +32,23 @@ impl PointClass {
             Self::Building => "building",
             Self::Vegetation => "vegetation",
             Self::Water => "water",
-            Self::Noise => "noise",
+            Self::LowNoise => "low noise",
             Self::Other => "other",
+        }
+    }
+
+    /// Числовой код класса для текстовых форматов экспорта (`.xyz`, `.ply`).
+    ///
+    /// Нумерация совпадает с той, что исторически используется при экспорте
+    /// PLY в `lidar-simulator` (LowNoise = 7 и т.п.).
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Ground => 2,
+            Self::Vegetation => 5,
+            Self::Building => 6,
+            Self::LowNoise => 7,
+            Self::Water => 9,
+            Self::Other => 1,
         }
     }
 
@@ -45,7 +60,7 @@ impl PointClass {
             Self::Building => Color::srgb(0.85, 0.12, 0.10),
             Self::Vegetation => Color::srgb(0.20, 0.60, 0.20),
             Self::Water => Color::srgb(0.15, 0.35, 0.75),
-            Self::Noise => Color::srgb(0.60, 0.10, 0.10),
+            Self::LowNoise => Color::srgb(0.85, 0.15, 0.93),
             Self::Other => Color::srgb(0.55, 0.55, 0.55),
         }
     }
