@@ -59,7 +59,7 @@ fn build_spruce_needles(
 
         // Ствол не покрываем хвоей.
         // Основные и боковые ветви ели начинаются с level >= 1.
-        if to.level == 0 || to.branch_id == 0 {
+        if to.level == 0 || (to.branch_id == 0 && to.level <= 15) {
             continue;
         }
 
