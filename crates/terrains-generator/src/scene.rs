@@ -137,6 +137,17 @@ pub fn generate_from_data(
 }
 
 /// Общая реализация: `preset_hint` нужен только для fallback-решений
+/// Архетип ландшафта по архетипу террейна (fallback, когда файл суб-пресета
+/// недоступен или его `kind` не сводится к архетипу [`LandscapePreset`]).
+fn landscape_archetype(preset_hint: Option<TerrainPreset>, seed: Seed) -> LandscapeConfig {
+    let fallback = preset_hint
+        .map(TerrainPreset::landscape)
+        .unwrap_or(LandscapePreset::Plain);
+    let mut c = landscapes_generator::resolve(fallback, seed.with_label("landscape"));
+    c.size_m = 100.0;
+    c
+}
+
 /// (тип травы, твики зданий по архетипу) и для функций расстановки.
 #[allow(clippy::too_many_arguments)]
 fn generate_impl(
@@ -149,25 +160,34 @@ fn generate_impl(
     let preset = preset_hint
         .unwrap_or_else(|| TerrainPreset::from_name(&data.name).unwrap_or(TerrainPreset::Field));
 
-    // Ландшафт: конфиг из файла суб-пресета (с заменой seed), либо архетип.
+    // Ландшафт: пересобираем архетип из файла суб-пресета (с заменой seed)
+    // либо архетип по архетипу террейна.
+    //
+    // Пресеты ландшафтов в каталоге — «запечённые» примеры
+    // (`resolve(архетип, Seed::new(0))`, см. `dump_presets`): использование
+    // их напрямую даёт один и тот же рельеф на любой seed территории (меняется
+    // только шум каменистости). Поэтому, если `kind` суб-пресета сводится к
+    // архетипу [`LandscapePreset`], пересобираем конфиг из seed — рельеф
+    // территории тоже получает структурное разнообразие. Файловый конфиг
+    // остаётся fallback-ом для кастомных пресетов с неизвестным `kind`.
     let sub_landscape = presets_root
-        .and_then(|root| resolve_cross_category("landscapes", &data.landscape_id, root))
-        .and_then(|meta| load_preset_config::<LandscapeConfig>(&meta));
+        .and_then(|root| resolve_cross_category("landscapes", &data.landscape_id, root));
     let mut cfg = match sub_landscape {
-        Some(mut loaded) => {
-            loaded.seed = seed.with_label("landscape");
-            loaded.size_m = 100.0;
-            loaded
+        Some(meta) => {
+            if let Some(archetype) = LandscapePreset::from_kind(&meta.kind) {
+                let mut c =
+                    landscapes_generator::resolve(archetype, seed.with_label("landscape"));
+                c.size_m = 100.0;
+                c
+            } else if let Some(mut loaded) = load_preset_config::<LandscapeConfig>(&meta) {
+                loaded.seed = seed.with_label("landscape");
+                loaded.size_m = 100.0;
+                loaded
+            } else {
+                landscape_archetype(preset_hint, seed)
+            }
         }
-        None => {
-            // Файл ландшафта недоступен — архетип по архетипу террейна.
-            let fallback = preset_hint
-                .map(TerrainPreset::landscape)
-                .unwrap_or(LandscapePreset::Plain);
-            let mut c = landscapes_generator::resolve(fallback, seed.with_label("landscape"));
-            c.size_m = 100.0;
-            c
-        }
+        None => landscape_archetype(preset_hint, seed),
     };
     // Developed areas need moderately smooth ground for building foundations.
     if data.buildings > 0 {

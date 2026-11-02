@@ -124,6 +124,31 @@ impl LandscapePreset {
         }
     }
 
+    /// Разобрать пресет по каноническому `kind`-слагу архетипа
+    /// ([`Self::kind`], например `"plain"`, `"canyon-ledge"`, `"sloping-river"`).
+    ///
+    /// Обратное отображение к [`Self::kind`] — используется, чтобы вернуть
+    /// архетип по тегу из `manifest.ron` пресета каталога `presets/` (тег
+    /// пишется тем же слагом). `None` — тег не соответствует ни одному
+    /// архетипу (кастомный курируемый пресет).
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "plain" => Some(Self::Plain),
+            "slope" => Some(Self::Slope),
+            "plain-slope" => Some(Self::PlainSlope),
+            "multi-level" => Some(Self::MultiLevel),
+            "canyon-ledge" => Some(Self::CanyonLedge),
+            "gorge" => Some(Self::Gorge),
+            "river" => Some(Self::River),
+            "pond" => Some(Self::Pond),
+            "shore" => Some(Self::Shore),
+            "sloping-river" => Some(Self::SlopingRiver),
+            "waterfall" => Some(Self::Waterfalls),
+            "hills" => Some(Self::Hills),
+            _ => None,
+        }
+    }
+
     /// Разобрать пресет из имени (для CLI и тестов).
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {

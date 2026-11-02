@@ -230,11 +230,31 @@ fn regenerate_landscape(
     info!("Ландшафт сгенерирован: {}, seed = {seed}", config.label);
 }
 
-/// Конфигурация из случайно выбранного пресета (из файла `config.ron`),
-/// либо fallback на `resolve(preset, seed)`.
-fn resolve_config(seed: Seed, preset: LandscapePreset, store: Option<&PresetStore>) -> LandscapeConfig {
+/// Конфигурация ландшафта от seed.
+///
+/// Если выбран пресет каталога `presets/` с `kind`, соответствующим архетипу
+/// [`LandscapePreset`], — пересобираем его из `seed` через
+/// [`resolve`](crate::generation::preset::resolve). Без этого `R` давал бы
+/// одну и ту же «запечённую» геометрию из `config.ron` (там лежат дампы
+/// `resolve(архетип, Seed::new(0))`): менялось бы только поле fBm-шума и
+/// джиттер точек, а рельеф/русло/террасы оставались бы одинаковыми между
+/// сидами. Пересборка архетипа восстанавливает структурное разнообразие от
+/// seed (как было до введения системы пресетов).
+///
+/// Для пресетов, не сводящихся к архетипам (`kind` отсутствует в
+/// [`LandscapePreset::from_kind`], например кастомный курируемый конфиг),
+/// используется файловый `config.ron` с подстановкой актуального seed. Если
+/// каталога пресетов нет — fallback на переданный `preset`.
+fn resolve_config(
+    seed: Seed,
+    preset: LandscapePreset,
+    store: Option<&PresetStore>,
+) -> LandscapeConfig {
     if let Some(store) = store {
         if let Some(meta) = store.random() {
+            if let Some(archetype) = LandscapePreset::from_kind(&meta.kind) {
+                return resolve(archetype, seed);
+            }
             if let Some(mut config) = load_preset_config::<LandscapeConfig>(meta) {
                 config.seed = seed;
                 config.label = meta.name.clone();
