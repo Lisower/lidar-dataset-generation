@@ -60,6 +60,8 @@ pub enum PlantPreset {
     PalmCoconuts,
     /// Куст: густая листва от самой земли.
     Bush,
+    /// Можжевельник: низкий раскидистый хвойный кустарник с густой кроной.
+    Juniper,
     /// Высокая густая трава (пышные пучки).
     TallGrass,
     /// Низкая редкая трава (жидкие пучки).
@@ -68,7 +70,7 @@ pub enum PlantPreset {
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::DeciduousTree,
         Self::Spruce,
         Self::Fir,
@@ -77,6 +79,7 @@ impl PlantPreset {
         Self::Palm,
         Self::PalmCoconuts,
         Self::Bush,
+        Self::Juniper,
         Self::TallGrass,
         Self::SparseGrass,
     ];
@@ -92,6 +95,7 @@ impl PlantPreset {
             Self::Palm => "пальма",
             Self::PalmCoconuts => "пальма с кокосами",
             Self::Bush => "куст",
+            Self::Juniper => "можжевельник",
             Self::TallGrass => "высокая трава",
             Self::SparseGrass => "низкая трава",
         }
@@ -107,7 +111,7 @@ impl PlantPreset {
             | Self::Willow
             | Self::Palm
             | Self::PalmCoconuts => PlantType::Tree,
-            Self::Bush => PlantType::Bush,
+            Self::Bush | Self::Juniper => PlantType::Bush,
             Self::TallGrass | Self::SparseGrass => PlantType::Grass,
         }
     }
@@ -125,6 +129,7 @@ impl PlantPreset {
             Self::Palm => "palm",
             Self::PalmCoconuts => "palm-coconuts",
             Self::Bush => "bush",
+            Self::Juniper => "juniper",
             Self::TallGrass => "tall-grass",
             Self::SparseGrass => "sparse-grass",
         }
@@ -149,6 +154,7 @@ impl PlantPreset {
             "palm" | "пальма" => Some(Self::Palm),
             "palmcoconuts" | "пальма с кокосами" => Some(Self::PalmCoconuts),
             "bush" | "куст" => Some(Self::Bush),
+            "juniper" | "можжевельник" => Some(Self::Juniper),
             "tallgrass" | "высокая трава" | "трава" => Some(Self::TallGrass),
             "sparsegrass" | "низкая трава" => Some(Self::SparseGrass),
             _ => None,
