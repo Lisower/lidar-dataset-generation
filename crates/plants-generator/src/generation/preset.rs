@@ -20,12 +20,10 @@ use super::config::{
 };
 
 /// Зелёные оттенки листвы.
-const FOLIAGE_GREEN_LIGHT: Color = Color::srgb(0.32, 0.62, 0.22);
 const FOLIAGE_GREEN_MID: Color = Color::srgb(0.24, 0.5, 0.18);
 const FOLIAGE_GREEN_DARK: Color = Color::srgb(0.18, 0.38, 0.16);
 
 /// Цвета стволов/веток.
-const BARK_TREE: Color = Color::srgb(0.36, 0.22, 0.10);
 const BARK_BUSH: Color = Color::srgb(0.28, 0.2, 0.08);
 
 /// Детерминированный поток случайности для пресетных решений.
@@ -91,9 +89,8 @@ pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
     }
 
     let mut cfg = match preset {
-        PlantPreset::DeciduousTree => deciduous_tree(),
-        // Обработаны выше (загрузка из RON-пресетов) — сюда не попадают.
-        PlantPreset::Spruce 
+        PlantPreset::DeciduousTree 
+        | PlantPreset::Spruce 
         | PlantPreset::Fir
         | PlantPreset::Pine
         | PlantPreset::Willow
@@ -237,94 +234,6 @@ fn branching_level(
             color: None,
         })
         .collect()
-}
-
-/// Лиственное дерево: 12 уровней, ствол → 4 основные ветви → тройки шаблонов.
-///
-/// Таблицы уровней — из прототипа (`tree_config`): длины/радиусы/тапера/углы/
-/// число детей/число граней. Вместе с накоплением углов в скелете это даёт
-/// ажурную крону. Окно кандидатов (см. `grow`) делает достижимыми все три
-/// ветки тройки «продолжить/−поворот/+поворот» — азимут не дрейфует, крона
-/// не закручивается спиралью. Дерево на 12 уровнях (0..11), а не на 15:
-/// при ветвлении 2..3 на узел 15 уровней дали бы ~600 тыс. веток (у 15-го
-/// уровня прототипа ветвление было строго 2 из-за «короткого» окна).
-fn deciduous_tree() -> PlantConfig {
-    let mut branches: BranchLevels = Vec::new();
-
-    // Уровень 0 — ствол: абсолютные размеры, почти вертикальный (горизонт
-    // произвольный 0..360).
-    branches.push(vec![sector_branch(
-        0, 0, 180.0, 180.0, 0.0, 5.0, (1.5, 2.5), (0.6, 0.8), (0.8, 0.85), (2, 4), 0, 12,
-    )]);
-
-    // Уровень 1 — 4 основные ветви по секторам 120° (как в прототипе, секторы
-    // не равномерны, а 0/120/240/360).
-    let mut level1 = Vec::new();
-    for j in 0..4 {
-        level1.push(sector_branch(
-            1, j, 120.0 * j as f32, 40.0, 30.0, 5.0, (0.8, 0.85), (0.9, 0.95), (0.85, 0.9),
-            (2, 3), 0, 16,
-        ));
-    }
-    branches.push(level1);
-
-    // Уровни 2..4 — скелет кроны: ветки продолжают азимут родителя либо
-    // сворачивают на ±40°.
-    for level in 2..5 {
-        branches.push(branching_level(
-            level, (0.8, 0.85), (0.9, 0.95), (0.9, 0.95), (-10.0, 30.0), 15.0, 40.0, (2, 3), 8,
-        ));
-    }
-
-    // Средние ветви кроны — сохраняем густоту.
-    for level in 5..7 {
-        branches.push(branching_level(
-            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97),
-            (-5.0, 20.0), 12.5, 32.5, (2, 3), 4,
-        ));
-    }
-
-    // Мелкие верхние ветви — уменьшаем лишнее ветвление.
-    for level in 7..10 {
-        branches.push(branching_level(
-            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97),
-            (-10.0, 10.0), 12.5, 32.5, (2, 3), 4,
-        ));
-    }
-
-    // Уровни 9..10 — самые тонкие кончики, почти без наклона вверх: накоп-
-    // ленная вертикаль уже большая, поэтому крона «капает» вниз по краю.
-    for level in 10..11 {
-        branches.push(branching_level(
-            level, (0.8, 0.85), (0.9, 0.95), (0.95, 0.97), (-5.0, 5.0), 10.0, 25.0, (2, 3), 4,
-        ));
-    }
-
-    PlantConfig {
-        seed: Seed::default(),
-        preset: PlantPreset::DeciduousTree,
-        plant_type: PlantType::Tree,
-        branches,
-        branch_color: BARK_TREE,
-        max_branches: 300_000,
-        foliage: FoliageConfig {
-            style: FoliageStyle::Leafy,
-            placement: FoliagePlacement::Terminal { min_level: 2 },
-            color: FOLIAGE_GREEN_LIGHT,
-            length: 0.2,
-            width: 0.15,
-            per_anchor: 3,
-            anchors: 1,
-            pitch_jitter: 60.0,
-            cloud_points: 1,
-        },
-        grass: grass_default(),
-        point_step: 0.2,
-        jitter: 0.02,
-        spread_radius: 30.0,
-        neighbors_min: 3,
-        neighbors_max: 7,
-    }
 }
 
 /// Куст: много стволиков от земли, листва почти от самой земли.
