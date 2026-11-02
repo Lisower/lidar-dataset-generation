@@ -1,6 +1,6 @@
 (
     id: "apartment-block",
-    name: "Apartment block",
+    name: "Многоквартирный дом",
     description: "",
     kind: "apartment-block",
 )

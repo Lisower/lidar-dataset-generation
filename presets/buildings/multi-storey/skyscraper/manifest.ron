@@ -1,6 +1,6 @@
 (
     id: "skyscraper",
-    name: "Skyscraper",
+    name: "Небоскрёб",
     description: "",
     kind: "skyscraper",
 )

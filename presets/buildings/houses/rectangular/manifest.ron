@@ -1,6 +1,6 @@
 (
     id: "rectangular",
-    name: "Rectangular",
+    name: "Прямоугольный",
     description: "",
     kind: "rectangular",
 )

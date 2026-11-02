@@ -135,7 +135,10 @@ fn scene_from(
                 // Корень каталога пресетов = родитель папки категории.
                 let presets_root = store.root.parent().unwrap_or(&store.root);
                 let scene = generate_from_data(&data, seed, Some(presets_root));
-                return (scene, data.name.clone());
+                // В отображаемом имени — русское название из манифеста, а не
+                // технический id пресета (`data.name`), который используется
+                // только для обратного поиска архетипа.
+                return (scene, meta.name.clone());
             }
         }
     }

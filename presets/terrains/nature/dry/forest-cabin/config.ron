@@ -8,7 +8,7 @@
     building_id: "cabin",
     trees: 31,
     bushes: 30,
-    grass: 160,
+    grass: 1600,
     buildings: 1,
     max_slope_deg: 10.0,
 )

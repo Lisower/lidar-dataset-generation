@@ -5,10 +5,10 @@
     tree_id: "deciduous-tree",
     bush_id: "bush",
     grass_id: "sparse-grass",
-    building_id: "cottage",
+    building_id: "rectangular",
     trees: 8,
     bushes: 14,
-    grass: 130,
+    grass: 1300,
     buildings: 8,
     max_slope_deg: 10.0,
 )

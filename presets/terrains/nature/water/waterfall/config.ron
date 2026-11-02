@@ -8,7 +8,7 @@
     building_id: "",
     trees: 11,
     bushes: 18,
-    grass: 90,
+    grass: 900,
     buildings: 0,
     max_slope_deg: 10.0,
 )

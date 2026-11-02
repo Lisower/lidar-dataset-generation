@@ -18,11 +18,11 @@ impl BuildingPreset {
     pub const ALL: [Self; 5] = [Self::Rectangular, Self::LShaped, Self::WithAnnex, Self::ApartmentBlock, Self::Skyscraper];
     pub fn label(self) -> &'static str {
         match self {
-            Self::Rectangular => "Rectangular",
-            Self::LShaped => "L-shaped",
-            Self::WithAnnex => "House with annex",
-            Self::ApartmentBlock => "Apartment block",
-            Self::Skyscraper => "Skyscraper",
+            Self::Rectangular => "Прямоугольный",
+            Self::LShaped => "Г-образный",
+            Self::WithAnnex => "Дом с пристройкой",
+            Self::ApartmentBlock => "Многоквартирный дом",
+            Self::Skyscraper => "Небоскрёб",
         }
     }
 }

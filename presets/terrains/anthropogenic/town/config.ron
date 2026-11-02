@@ -8,7 +8,7 @@
     building_id: "apartment-block",
     trees: 5,
     bushes: 9,
-    grass: 70,
+    grass: 700,
     buildings: 14,
     max_slope_deg: 10.0,
 )

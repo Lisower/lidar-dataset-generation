@@ -211,7 +211,7 @@ impl TerrainPresetData {
         };
         // Вид здания по архетипу (пусто — зданий нет).
         let building_kind = match preset {
-            TerrainPreset::Village => Some("cottage"),
+            TerrainPreset::Village => Some("rectangular"),
             TerrainPreset::Town => Some("apartment-block"),
             TerrainPreset::ForestCabin => Some("cabin"),
             _ => None,

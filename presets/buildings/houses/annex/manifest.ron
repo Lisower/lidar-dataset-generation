@@ -1,6 +1,6 @@
 (
     id: "annex",
-    name: "House with annex",
+    name: "Дом с пристройкой",
     description: "",
     kind: "annex",
 )

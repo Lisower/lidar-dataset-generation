@@ -1,6 +1,6 @@
 (
     id: "l-shaped",
-    name: "L-shaped",
+    name: "Г-образный",
     description: "",
     kind: "l-shaped",
 )
