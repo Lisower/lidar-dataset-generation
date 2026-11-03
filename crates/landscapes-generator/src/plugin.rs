@@ -20,7 +20,8 @@ use bevy::asset::Assets;
 use bevy::mesh::Mesh;
 use bevy::pbr::StandardMaterial;
 use bevy::prelude::*;
-use bevy_utils::cameras::OrbitCamera;
+use bevy_utils::cameras::{OrbitCamera, map_overview_radius};
+use bevy_utils::visuals::lighting::sun_shadows;
 use generation_core::general::RegenerationRequest;
 use generation_core::seeds::GlobalSeed;
 use generation_core::{load_preset_config, Seed, ViewMode, PresetStore};
@@ -133,6 +134,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, 0.8, 0.0)),
+        sun_shadows(),
     ));
 
     // Рассеянная подсветка.
@@ -143,6 +145,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, 0.9, -0.5, 0.0)),
+        sun_shadows(),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 450.0,
@@ -220,7 +223,7 @@ fn regenerate_landscape(
         // Высота в мировых осях Y = локальной Z сцены (корень наклонён на -90°).
         let mid = (landscape.min_height + landscape.max_height) * 0.5;
         orbit.focus = Vec3::new(0.0, mid.clamp(-20.0, 60.0) * 0.6, 0.0);
-        orbit.radius = (landscape.heightfield.size_m * 0.85).clamp(8.0, 400.0);
+        orbit.radius = map_overview_radius(landscape.heightfield.size_m);
         orbit.pitch = 0.58;
     }
 

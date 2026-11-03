@@ -56,6 +56,28 @@ impl TerrainPreset {
         }
     }
 
+    /// Русское отображаемое название пресета.
+    ///
+    /// Совпадает с `name` в манифестах `presets/terrains/…`; используется,
+    /// когда каталог пресетов недоступен и сцена строится по встроенному
+    /// архетипу.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Field => "Поле",
+            Self::Forest => "Лес",
+            Self::HillSlope => "Склон холма",
+            Self::TerracedSlope => "Террасированный склон",
+            Self::River => "Речка",
+            Self::Pond => "Пруд",
+            Self::Coast => "Побережье",
+            Self::SlopingRiver => "Наклонная река",
+            Self::Waterfall => "Водопад",
+            Self::Village => "Село",
+            Self::Town => "Городок",
+            Self::ForestCabin => "Лесная избушка",
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "field" | "поле" => Some(Self::Field),

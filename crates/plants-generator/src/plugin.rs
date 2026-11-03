@@ -21,6 +21,7 @@ use bevy::mesh::Mesh;
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::cameras::OrbitCamera;
+use bevy_utils::visuals::lighting::sun_shadows;
 use bevy_utils::visuals::materials::material;
 use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
@@ -160,6 +161,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, 0.8, 0.0)),
+        sun_shadows(),
     ));
 
     // Рассеянная подсветка.
@@ -170,6 +172,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, 0.9, -0.5, 0.0)),
+        sun_shadows(),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 500.0,
@@ -270,7 +273,12 @@ fn regenerate_plants(
     if let Some(orbit) = orbit {
         // Высота в мировых осях Y = локальной Z сцены.
         orbit.focus = Vec3::new(0.0, scene.max_height * 0.4, 0.0);
-        orbit.radius = (scene.extent * 1.4).clamp(4.0, 400.0);
+        // У деревьев `extent` — радиус основания/кроны, а не высота, поэтому
+        // отдельно учитываем высоту: иначе камера оказывается слишком близко
+        // и дерево не помещается в кадр. Для кустов и травы решающим остаётся
+        // их размах, так что пропорции сохраняются.
+        let framing = scene.extent.max(scene.max_height * 1.5) * 1.4;
+        orbit.radius = framing.clamp(4.0, 400.0);
         orbit.pitch = 0.55;
     }
 

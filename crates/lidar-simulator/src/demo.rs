@@ -9,7 +9,7 @@ use generation_core::{
 };
 use std::{
     io::{BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 #[derive(Clone, Debug)]
@@ -233,13 +233,21 @@ pub fn run_headless(options: DemoOptions) -> Result<(), Box<dyn std::error::Erro
 
 pub fn run(options: DemoOptions) -> Result<(), &'static str> {
     validate_options(&options)?;
+    // Ассеты ищем рядом с exe/в рабочем каталоге (переносимая сборка), а путь
+    // сборочной машины оставляем запасным для `cargo run`.
+    let assets_root = generation_core::presets::resolve_dir(
+        "assets",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("buildings-generator")
+            .join("assets"),
+    );
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.035, 0.05)))
         .insert_resource(Demo::new(options))
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
-                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../buildings-generator/assets")
-                    .into(),
+                file_path: assets_root.to_string_lossy().into_owned(),
                 ..default()
             }),
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 55.0),

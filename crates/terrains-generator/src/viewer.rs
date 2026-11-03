@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
+use bevy_utils::cameras::{OrbitCamera, map_overview_radius};
+use bevy_utils::visuals::lighting::sun_shadows;
 use buildings_generator::visual::{
     PointCloudEntity as BuildingCloud, VisualMesh as BuildingMesh, spawn_building,
 };
@@ -21,13 +23,25 @@ use plants_generator::visual::{
 use plants_generator::{GenerationMode, PlacedPlant, PlacedTuft, PlantPreset, PlantScene};
 use terrains_generator::{TerrainPreset, TerrainPresetData, TerrainScene, generate, generate_from_data};
 
+/// Подсказка об управлении.
+const HELP: &str =
+    "[Ctrl+S] пресеты  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
+
 #[derive(Resource)]
 struct SelectedPreset(TerrainPreset);
 
 #[derive(Default, Resource)]
 struct TerrainViewerState {
     root: Option<Entity>,
+    /// Сгенерированная сцена (нужна панели информации).
+    scene: Option<TerrainScene>,
+    /// Русское название текущего пресета из манифеста.
+    preset_name: String,
 }
+
+/// Маркер текстовой панели информации о территории.
+#[derive(Component)]
+struct TerrainInfoText;
 
 pub struct TerrainViewerPlugin {
     pub initial_preset: TerrainPreset,
@@ -38,7 +52,7 @@ impl Plugin for TerrainViewerPlugin {
         app.insert_resource(SelectedPreset(self.initial_preset))
             .init_resource::<TerrainViewerState>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (regenerate, apply_view_mode).chain());
+            .add_systems(Update, (regenerate, update_info, apply_view_mode).chain());
     }
 }
 
@@ -46,6 +60,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     seed: Res<GlobalSeed>,
     preset: Res<SelectedPreset>,
     store: Option<Res<PresetStore>>,
@@ -60,6 +75,7 @@ fn setup(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, 0.8, 0.0)),
+        sun_shadows(),
     ));
     commands.spawn((
         DirectionalLight {
@@ -68,11 +84,14 @@ fn setup(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, 0.9, -0.5, 0.0)),
+        sun_shadows(),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 450.0,
         ..default()
     });
+
+    spawn_info_panel(&mut commands, &asset_server);
 
     build_scene(
         &mut commands,
@@ -82,6 +101,9 @@ fn setup(
         seed.0,
         store.as_deref(),
         &mut state,
+        // При первом запуске сохраняем обзорный ракурс камеры; подстраиваем
+        // расстояние только при перегенерации (R / выбор пресета).
+        None,
     );
 }
 
@@ -95,6 +117,7 @@ fn regenerate(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut state: ResMut<TerrainViewerState>,
+    mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
     let mut refresh = false;
     // R / Shift+R are emitted by the team's GenerationControlsPlugin.
@@ -119,6 +142,7 @@ fn regenerate(
         seed.0,
         store.as_deref(),
         &mut state,
+        orbit.as_deref_mut(),
     );
 }
 
@@ -142,7 +166,103 @@ fn scene_from(
             }
         }
     }
-    (generate(preset, seed), preset.name().to_string())
+    (generate(preset, seed), preset.label().to_string())
+}
+
+/// Панель информации в левом верхнем углу.
+fn spawn_info_panel(commands: &mut Commands, asset_server: &AssetServer) {
+    let font = asset_server.load("fonts/Roboto-Regular.ttf");
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(12.0),
+                top: Val::Px(12.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.06, 0.07, 0.72)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                TerrainInfoText,
+                Text::new(""),
+                TextFont {
+                    font: font.into(),
+                    font_size: FontSize::Px(15.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.92, 0.95, 0.97)),
+            ));
+        });
+}
+
+/// Обновить панель информации при смене сцены или вида.
+fn update_info(
+    mut text: Query<&mut Text, With<TerrainInfoText>>,
+    state: Res<TerrainViewerState>,
+    view_mode: Res<ViewMode>,
+) {
+    if !state.is_changed() && !view_mode.is_changed() {
+        return;
+    }
+    let Ok(mut text) = text.single_mut() else {
+        return;
+    };
+    let Some(scene) = &state.scene else {
+        return;
+    };
+
+    let landscape = &scene.landscape;
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Территория · {} · seed {}",
+        state.preset_name, scene.seed
+    ));
+    lines.push(format!(
+        "Карта {:.0}×{:.0} м · рельеф {:.1}…{:.1} м",
+        landscape.heightfield.size_m,
+        landscape.heightfield.size_m,
+        landscape.min_height,
+        landscape.max_height
+    ));
+
+    if landscape.has_water {
+        let w_lo = landscape
+            .water
+            .levels
+            .iter()
+            .flatten()
+            .fold(f32::INFINITY, |acc, &w| acc.min(w));
+        let w_hi = landscape
+            .water
+            .levels
+            .iter()
+            .flatten()
+            .fold(f32::NEG_INFINITY, |acc, &w| acc.max(w));
+        lines.push(format!("Вода: {:.1}…{:.1} м", w_lo, w_hi));
+    } else {
+        lines.push("Вода: нет".to_string());
+    }
+
+    lines.push(format!(
+        "Объекты: деревья {} · кусты {} · трава {} · здания {}",
+        scene.trees.len(),
+        scene.bushes.len(),
+        scene.grass.len(),
+        scene.buildings.len()
+    ));
+    lines.push(format!(
+        "Точки: грунт {} · вода {}",
+        landscape.ground_cloud.points.len(),
+        landscape.water_cloud.points.len()
+    ));
+
+    lines.push(String::new());
+    lines.push(HELP.to_string());
+    lines.push(format!("Режим вида: {}", view_mode.label()));
+
+    text.0 = lines.join("\n");
 }
 
 fn build_scene(
@@ -153,8 +273,20 @@ fn build_scene(
     seed: Seed,
     store: Option<&PresetStore>,
     state: &mut TerrainViewerState,
+    orbit: Option<&mut OrbitCamera>,
 ) {
     let (scene, preset_name) = scene_from(preset, seed, store);
+
+    if let Some(orbit) = orbit {
+        // Та же посадка камеры, что и в генераторе ландшафтов: расстояние до
+        // стометровой карты и наклон взгляда должны совпадать, чтобы после
+        // перегенерации территория выглядела привычно.
+        let mid = (scene.landscape.min_height + scene.landscape.max_height) * 0.5;
+        orbit.focus = Vec3::new(0.0, mid.clamp(-20.0, 60.0) * 0.6, 0.0);
+        orbit.radius = map_overview_radius(scene.landscape.heightfield.size_m);
+        orbit.pitch = 0.58;
+    }
+
     let root = commands
         .spawn((
             Transform::default(),
@@ -242,9 +374,8 @@ fn build_scene(
         commands.entity(root).add_child(spawned.root);
     }
 
-    state.root = Some(root);
     info!(
-        "Preset: {} | seed: {} | 100 x 100m | trees={} bushes={} grass={} buildings={} | Ctrl+S presets, R new, Shift+R same, V mode, Tab camera",
+        "Территория: {} | seed: {} | 100 x 100m | trees={} bushes={} grass={} buildings={} | Ctrl+S presets, R new, Shift+R same, V mode, Tab camera",
         preset_name,
         seed,
         scene.trees.len(),
@@ -252,6 +383,10 @@ fn build_scene(
         scene.grass.len(),
         scene.buildings.len()
     );
+
+    state.root = Some(root);
+    state.preset_name = preset_name;
+    state.scene = Some(scene);
 }
 
 fn add_plant(

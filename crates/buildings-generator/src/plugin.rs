@@ -16,6 +16,7 @@ use bevy::mesh::Mesh;
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::cameras::OrbitCamera;
+use bevy_utils::visuals::lighting::sun_shadows;
 use bevy_utils::visuals::materials::material;
 use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
@@ -131,6 +132,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, 0.8, 0.0)),
+        sun_shadows(),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 500.0,
