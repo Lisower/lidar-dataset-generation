@@ -12,7 +12,7 @@ use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::visuals::materials::material;
-use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
+use generation_core::point_clouds::visual::spawn_point_cloud;
 
 use crate::generation::{FallsCurtain, Heightfield, Landscape, WaterField};
 
@@ -80,7 +80,11 @@ pub fn spawn_landscape(
     commands.entity(root).add_child(ground);
 
     // --- меш воды ---
-    if let Some(water_mesh) = water_mesh(&landscape.heightfield, &landscape.water, &landscape.water_walls) {
+    if let Some(water_mesh) = water_mesh(
+        &landscape.heightfield,
+        &landscape.water,
+        &landscape.water_walls,
+    ) {
         let mesh = meshes.add(water_mesh);
         let material = materials.add(water_material());
         let water = commands
@@ -98,30 +102,14 @@ pub fn spawn_landscape(
 
     // --- облака точек (режим облака точек) ---
     if !landscape.ground_cloud.is_empty() {
-        let mesh = meshes.add(point_cloud_mesh(&landscape.ground_cloud));
-        let material = materials.add(point_cloud_material());
-        let cloud = commands
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
-                PointCloudEntity,
-                Visibility::default(),
-            ))
-            .id();
+        let cloud = spawn_point_cloud(commands, meshes, &landscape.ground_cloud);
+        commands.entity(cloud).insert(PointCloudEntity);
         entities.push(cloud);
         commands.entity(root).add_child(cloud);
     }
     if !landscape.water_cloud.is_empty() {
-        let mesh = meshes.add(point_cloud_mesh(&landscape.water_cloud));
-        let material = materials.add(point_cloud_material());
-        let cloud = commands
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
-                PointCloudEntity,
-                Visibility::default(),
-            ))
-            .id();
+        let cloud = spawn_point_cloud(commands, meshes, &landscape.water_cloud);
+        commands.entity(cloud).insert(PointCloudEntity);
         entities.push(cloud);
         commands.entity(root).add_child(cloud);
     }
@@ -148,10 +136,26 @@ pub fn terrain_mesh(hf: &Heightfield) -> Mesh {
             let d = hf.index(i, j + 1) as u32;
             indices.extend([a, b, c, a, c, d]);
 
-            let pa = Vec3::new(positions[a as usize][0], positions[a as usize][1], positions[a as usize][2]);
-            let pb = Vec3::new(positions[b as usize][0], positions[b as usize][1], positions[b as usize][2]);
-            let pc = Vec3::new(positions[c as usize][0], positions[c as usize][1], positions[c as usize][2]);
-            let pd = Vec3::new(positions[d as usize][0], positions[d as usize][1], positions[d as usize][2]);
+            let pa = Vec3::new(
+                positions[a as usize][0],
+                positions[a as usize][1],
+                positions[a as usize][2],
+            );
+            let pb = Vec3::new(
+                positions[b as usize][0],
+                positions[b as usize][1],
+                positions[b as usize][2],
+            );
+            let pc = Vec3::new(
+                positions[c as usize][0],
+                positions[c as usize][1],
+                positions[c as usize][2],
+            );
+            let pd = Vec3::new(
+                positions[d as usize][0],
+                positions[d as usize][1],
+                positions[d as usize][2],
+            );
 
             let n1 = (pb - pa).cross(pc - pa);
             let n2 = (pc - pa).cross(pd - pa);
@@ -175,7 +179,10 @@ pub fn terrain_mesh(hf: &Heightfield) -> Mesh {
         })
         .collect();
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_indices(Indices::U32(indices));
@@ -202,12 +209,7 @@ pub fn water_mesh(
 
     for j in 0..n - 1 {
         for i in 0..n - 1 {
-            let ws = [
-                wet(i, j),
-                wet(i + 1, j),
-                wet(i + 1, j + 1),
-                wet(i, j + 1),
-            ];
+            let ws = [wet(i, j), wet(i + 1, j), wet(i + 1, j + 1), wet(i, j + 1)];
             let [Some(w00), Some(w10), Some(w11), Some(w01)] = ws else {
                 continue;
             };
@@ -225,8 +227,16 @@ pub fn water_mesh(
             let base = positions.len() as u32;
             let n1 = (v10 - v00).cross(v11 - v00);
             let n2 = (v11 - v00).cross(v01 - v00);
-            let n1 = if n1.length_squared() < 1e-12 { Vec3::Z } else { n1.normalize() };
-            let n2 = if n2.length_squared() < 1e-12 { Vec3::Z } else { n2.normalize() };
+            let n1 = if n1.length_squared() < 1e-12 {
+                Vec3::Z
+            } else {
+                n1.normalize()
+            };
+            let n2 = if n2.length_squared() < 1e-12 {
+                Vec3::Z
+            } else {
+                n2.normalize()
+            };
 
             for v in [v00, v10, v11, v00, v11, v01] {
                 positions.push(v.to_array());
@@ -245,7 +255,10 @@ pub fn water_mesh(
         return None;
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_indices(Indices::U32(indices));

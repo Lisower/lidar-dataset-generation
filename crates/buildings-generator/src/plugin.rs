@@ -16,12 +16,13 @@ use bevy::mesh::Mesh;
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::cameras::OrbitCamera;
+use bevy_utils::visuals::lighting::sun_shadows;
 use bevy_utils::visuals::materials::material;
 use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
-use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
+use generation_core::point_clouds::visual::spawn_point_cloud;
 use generation_core::seeds::GlobalSeed;
-use generation_core::{load_preset_config, PointClass, PointCloud, Seed, ViewMode, PresetStore};
+use generation_core::{PointClass, PointCloud, PresetStore, Seed, ViewMode, load_preset_config};
 
 use crate::generation::{Building, BuildingConfig};
 use crate::visual::{PointCloudEntity, VisualMesh, spawn_building};
@@ -67,7 +68,13 @@ impl Plugin for BuildingPlugin {
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,
-                (regenerate, update_info, apply_view_mode, apply_light_shadows).chain(),
+                (
+                    regenerate,
+                    update_info,
+                    apply_view_mode,
+                    apply_light_shadows,
+                )
+                    .chain(),
             );
     }
 }
@@ -131,6 +138,7 @@ fn setup_scene(
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -1.0, 0.8, 0.0)),
+        sun_shadows(),
     ));
     commands.insert_resource(GlobalAmbientLight {
         brightness: 500.0,
@@ -151,14 +159,8 @@ fn setup_scene(
 
     // Облако точек земли (ровная сетка на уровне y = 0) — для режима
     // облака точек.
-    let ground_cloud = meshes.add(point_cloud_mesh(&ground_point_cloud()));
-    let ground_cloud_material = materials.add(point_cloud_material());
-    commands.spawn((
-        Mesh3d(ground_cloud),
-        MeshMaterial3d(ground_cloud_material),
-        PointCloudEntity,
-        Visibility::default(),
-    ));
+    let ground_cloud = spawn_point_cloud(&mut commands, &mut meshes, &ground_point_cloud());
+    commands.entity(ground_cloud).insert(PointCloudEntity);
 
     // Панель информации.
     spawn_info_panel(&mut commands, &asset_server);
@@ -248,7 +250,8 @@ fn regenerate_building(
     if let Some(orbit) = orbit {
         // Здание стоит вертикально вдоль мирового Y.
         orbit.focus = Vec3::new(0.0, building.total_height() * 0.45, 0.0);
-        orbit.radius = (building.footprint_diagonal().max(building.total_height()) * 1.7).clamp(8.0, 400.0);
+        orbit.radius =
+            (building.footprint_diagonal().max(building.total_height()) * 1.7).clamp(8.0, 400.0);
         orbit.pitch = 0.55;
     }
 
@@ -260,7 +263,11 @@ fn regenerate_building(
 
 /// Конфигурация из случайно выбранного пресета (`config.ron`), либо fallback
 /// на базовую конфигурацию плагина; seed всегда подставляется актуальный.
-fn resolve_config(seed: Seed, fallback: &BuildingConfig, store: Option<&PresetStore>) -> BuildingConfig {
+fn resolve_config(
+    seed: Seed,
+    fallback: &BuildingConfig,
+    store: Option<&PresetStore>,
+) -> BuildingConfig {
     if let Some(store) = store {
         if let Some(meta) = store.random() {
             if let Some(mut config) = load_preset_config::<BuildingConfig>(meta) {
@@ -292,7 +299,10 @@ fn update_info(
     };
 
     let mut lines = Vec::new();
-    lines.push(format!("Preset: {} [Ctrl+S]", building.config.preset.label()));
+    lines.push(format!(
+        "Preset: {} [Ctrl+S]",
+        building.config.preset.label()
+    ));
     lines.push(format!("Здание · seed {}", building.seed));
     lines.push(format!(
         "Размеры {:.1} × {:.1} м · {} · высота стен {:.1} м",
@@ -367,10 +377,7 @@ fn apply_view_mode(
 /// В режиме облака точек тени отключаем: точки не должны «давать» тени
 /// (а на облаке они и не нужны). В визуальном режиме тени включены, чтобы
 /// здание выглядело объёмно.
-fn apply_light_shadows(
-    view_mode: Res<ViewMode>,
-    mut light: Query<&mut DirectionalLight>,
-) {
+fn apply_light_shadows(view_mode: Res<ViewMode>, mut light: Query<&mut DirectionalLight>) {
     let enabled = *view_mode == ViewMode::Visual;
     for mut light in &mut light {
         if light.shadow_maps_enabled != enabled {

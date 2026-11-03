@@ -4,12 +4,12 @@ use bevy::prelude::*;
 use bevy_utils::cameras::{CameraPlugin, MainCamera};
 use buildings_generator::{Building, BuildingConfig};
 use generation_core::{
-    PointClass, PointCloud, Seed,
-    point_clouds::visual::{point_cloud_material, point_cloud_mesh},
+    PointClass, PointCloud, PointCloudRenderPlugin, PointCloudTag, Seed,
+    point_clouds::visual::{ATTRIBUTE_POINT_SIZE, point_cloud_mesh},
 };
 use std::{
     io::{BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 #[derive(Clone, Debug)]
@@ -159,14 +159,23 @@ impl Demo {
             .collect();
         let mut positions: Vec<[f32; 3]> =
             self.scene.cloud.positions().map(|p| p.to_array()).collect();
+        let mut sizes: Vec<f32> = self
+            .scene
+            .cloud
+            .points
+            .iter()
+            .map(|point| point.class.point_size())
+            .collect();
         for point in &self.result().points {
             if point.class == PointClass::LowNoise {
                 positions.push(point.position.to_array());
                 colors.push([1.0, 0.55, 0.05, 1.0]);
+                sizes.push(PointClass::LowNoise.point_size());
             }
         }
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_attribute(ATTRIBUTE_POINT_SIZE, sizes);
         mesh
     }
 }
@@ -233,15 +242,24 @@ pub fn run_headless(options: DemoOptions) -> Result<(), Box<dyn std::error::Erro
 
 pub fn run(options: DemoOptions) -> Result<(), &'static str> {
     validate_options(&options)?;
+    // Ассеты ищем рядом с exe/в рабочем каталоге (переносимая сборка), а путь
+    // сборочной машины оставляем запасным для `cargo run`.
+    let assets_root = generation_core::presets::resolve_dir(
+        "assets",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("buildings-generator")
+            .join("assets"),
+    );
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.035, 0.05)))
         .insert_resource(Demo::new(options))
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
-                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../buildings-generator/assets")
-                    .into(),
+                file_path: assets_root.to_string_lossy().into_owned(),
                 ..default()
             }),
+            PointCloudRenderPlugin,
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 55.0),
         ))
         .add_systems(Startup, setup)
@@ -259,13 +277,13 @@ fn setup(
     mut commands: Commands,
     demo: Res<Demo>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<AssetServer>,
 ) {
     commands.spawn((
         CloudView,
         Mesh3d(meshes.add(demo.mesh())),
-        MeshMaterial3d(materials.add(point_cloud_material())),
+        PointCloudTag,
+        Visibility::default(),
     ));
     commands.spawn((
         Info,
@@ -481,9 +499,20 @@ mod tests {
         else {
             panic!("missing vertex colors");
         };
+        let Some(VertexAttributeValues::Float32(sizes)) = mesh.attribute(ATTRIBUTE_POINT_SIZE)
+        else {
+            panic!("missing point sizes");
+        };
         let captured = demo.frame.source_indices.len();
         assert!(captured > 0 && captured < demo.scene.cloud.len());
         assert_eq!(mesh.count_vertices(), demo.scene.cloud.len() + captured);
+        assert_eq!(sizes.len(), mesh.count_vertices());
+        let low_noise_size = PointClass::LowNoise.point_size();
+        assert_eq!(
+            sizes.iter().filter(|&&size| size == low_noise_size).count(),
+            captured
+        );
+        assert!(low_noise_size >= 2.0 * PointClass::Building.point_size());
         assert_eq!(
             colors
                 .iter()

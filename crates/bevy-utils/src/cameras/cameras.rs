@@ -18,7 +18,7 @@
 //! | Режим | Действие | Клавиши |
 //! |---|---|---|
 //! | Орбитальная | вращение | ЛКМ + движение мыши |
-//! | Орбитальная | приближение | колесо мыши |
+//! | Орбитальная | приближение | колесо мыши, `+` / `-` |
 //! | Свободная | обзор | ПКМ + движение мыши |
 //! | Свободная | движение | `W`, `A`, `S`, `D`, `Q` (вниз), `E` (вверх) |
 //! | Свободная | ускорение | `Shift` |
@@ -50,6 +50,16 @@ impl CameraMode {
             Self::Free => Self::Orbit,
         }
     }
+}
+
+/// Радиус орбитальной камеры для обзора карты размером `size_m` метров.
+///
+/// Даёт запас по краям карты, чтобы после перегенерации был виден весь
+/// объект. Для карты 100×100 м возвращает 145 м — то же расстояние, что
+/// используется в генераторе общих территорий, поэтому базовый ландшафт и
+/// общая территория выглядят с одинакового ракурса.
+pub fn map_overview_radius(size_m: f32) -> f32 {
+    (size_m * 1.45).clamp(8.0, 400.0)
 }
 
 /// Основная камера приложения.
@@ -331,13 +341,18 @@ fn camera_transition(
     }
 }
 
-/// Орбитальная камера: ЛКМ — вращение, колесо — приближение.
+/// Скорость приближения клавишами `+`/`-`: доля радиуса в секунду.
+const KEY_ZOOM_RATE: f32 = 1.2;
+
+/// Орбитальная камера: ЛКМ — вращение, колесо и `+`/`-` — приближение.
 fn orbit_input(
     ui: Res<UiModalOpen>,
     mode: Res<CameraMode>,
+    time: Res<Time>,
     transition: Res<CameraTransition>,
     mut orbit: ResMut<OrbitCamera>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut camera: Query<&mut Transform, With<MainCamera>>,
@@ -368,6 +383,16 @@ fn orbit_input(
         // Экспоненциальный зум: на больших расстояниях он удобнее линейного.
         orbit.radius = (orbit.radius * (1.0 - scroll * orbit.zoom_speed))
             .clamp(orbit.min_radius, orbit.max_radius);
+    }
+
+    // Клавиши `+`/`-` (в т. ч. цифровой блок и `=`/`_`): непрерывный зум,
+    // пока клавиша удерживается. Скорость не зависит от FPS.
+    let zoom_in = keys.pressed(KeyCode::Equal) || keys.pressed(KeyCode::NumpadAdd);
+    let zoom_out = keys.pressed(KeyCode::Minus) || keys.pressed(KeyCode::NumpadSubtract);
+    let key_zoom = zoom_in as i8 - zoom_out as i8;
+    if key_zoom != 0 {
+        let factor = (-(key_zoom as f32) * KEY_ZOOM_RATE * time.delta_secs()).exp();
+        orbit.radius = (orbit.radius * factor).clamp(orbit.min_radius, orbit.max_radius);
     }
 
     let Ok(mut transform) = camera.single_mut() else {

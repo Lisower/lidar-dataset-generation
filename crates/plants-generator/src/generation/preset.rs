@@ -31,12 +31,17 @@ fn preset_rng(preset: PlantPreset, seed: Seed) -> StdRng {
     seed.with_label(preset.label()).rng()
 }
 
-/// Корень каталога пресетов (workspace/presets).
+/// Корень каталога пресетов: рядом с exe/в рабочем каталоге (переносимая
+/// сборка), иначе — путь воркспейса для запуска из исходников.
 fn presets_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join(PRESETS_DIR)
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("..").join("..");
+    generation_core::presets::resolve_data_roots(
+        "plants",
+        workspace_root.join(PRESETS_DIR),
+        manifest_dir.join("settings"),
+    )
+    .presets_root
 }
 
 /// Конфигурация пресета из готового RON-файла каталога `presets/plants/...`
