@@ -91,7 +91,23 @@ impl Plant {
 
             let (_, faces, cloud) = &mut by_color[bucket];
             let midpoint = p0 + offset * 0.5;
-            for poly in cone_side_polygons(r0, r1, height, sides, axis) {
+            let polygons = if config.preset == PlantPreset::CactusLarge {
+            // Небольшое перекрытие соседних сегментов закрывает щели
+            // в местах изгиба рук кактуса.
+            let joint_overlap = (r0.min(r1) * 0.65).min(0.16);
+
+            cactus_side_polygons(
+                r0,
+                r1,
+                height + joint_overlap * 2.0,
+                sides,
+                axis,
+            )
+        } else {
+            cone_side_polygons(r0, r1, height, sides, axis)
+        };
+
+            for poly in polygons {
                 faces.push(translate_polygon(&poly, midpoint));
             }
             cloud.extend(branch_cone_cloud(r0, r1, height, axis, p0, config.point_step));
@@ -208,6 +224,85 @@ fn branch_cone_cloud(
         }
     }
     out
+}
+
+/// Ребристая поверхность кактуса:
+/// радиус чередуется между выступами и впадинами,
+/// образуя продольные рёбра.
+fn cactus_side_polygons(
+    r0: f32,
+    r1: f32,
+    height: f32,
+    sides: usize,
+    axis: Vec3,
+) -> Vec<Polygon> {
+    let (u, v) = basis(axis);
+    let z0 = -height * 0.5;
+    let z1 = height * 0.5;
+
+    // Для каждого ребра используем две точки:
+    // выступ и впадину между соседними рёбрами.
+    let rib_count = sides.max(6);
+    let vertex_count = rib_count * 2;
+    let step = std::f32::consts::TAU / vertex_count as f32;
+
+    let mut polys = Vec::with_capacity(vertex_count * 3);
+
+    // Боковая поверхность.
+    for i in 0..vertex_count {
+        let next = (i + 1) % vertex_count;
+
+        let a0 = step * i as f32;
+        let a1 = step * next as f32;
+
+        let c0 = u * a0.cos() + v * a0.sin();
+        let c1 = u * a1.cos() + v * a1.sin();
+
+        // Чётные точки — вершины рёбер,
+        // нечётные — неглубокие впадины.
+        let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
+        let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
+
+        let b0 = c0 * (r0 * relief0) + axis * z0;
+        let b1 = c1 * (r0 * relief1) + axis * z0;
+        let t0 = c0 * (r1 * relief0) + axis * z1;
+        let t1 = c1 * (r1 * relief1) + axis * z1;
+
+        let mid = (c0 * relief0 + c1 * relief1) * 0.5;
+
+        polys.push(
+            Polygon::quad(b0, b1, t1, t0)
+                .oriented(mid),
+        );
+    }
+
+    // Крышки сегмента.
+    for (z, r, pref) in [(z0, r0, -axis), (z1, r1, axis)] {
+        if r <= 1e-4 {
+            continue;
+        }
+
+        let center = axis * z;
+
+        for i in 0..vertex_count {
+            let next = (i + 1) % vertex_count;
+
+            let a0 = step * i as f32;
+            let a1 = step * next as f32;
+
+            let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
+            let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
+
+            let p0 =
+                center + (u * a0.cos() + v * a0.sin()) * (r * relief0);
+            let p1 =
+                center + (u * a1.cos() + v * a1.sin()) * (r * relief1);
+
+            polys.push(Polygon::triangle(center, p0, p1).oriented(pref));
+        }
+    }
+
+    polys
 }
 
 /// Боковая поверхность И основания усечённого конуса вдоль оси `axis`,

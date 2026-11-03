@@ -75,12 +75,14 @@ pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
     // Дополнительное дрожание к ним не применяется: разброс даёт сам seed.
     if matches!(
         preset,
-        PlantPreset::Spruce
+        PlantPreset::DeciduousTree
+            | PlantPreset::Spruce
             | PlantPreset::Fir
             | PlantPreset::Pine
             | PlantPreset::Willow
             | PlantPreset::Palm
             | PlantPreset::PalmCoconuts
+            | PlantPreset::CactusLarge 
             | PlantPreset::Juniper
     ) {
         let mut cfg = from_ron(preset);
@@ -95,7 +97,8 @@ pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
         | PlantPreset::Pine
         | PlantPreset::Willow
         | PlantPreset::Palm
-        | PlantPreset::PalmCoconuts 
+        | PlantPreset::PalmCoconuts
+        | PlantPreset::CactusLarge 
         | PlantPreset::Juniper => unreachable!("пресет RON-каталога"),
         PlantPreset::Bush => bush(),
         PlantPreset::TallGrass => tall_grass(),
