@@ -17,13 +17,14 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy_utils::cameras::CameraPlugin;
 use bevy_utils::preset_selector::PresetSelectorPlugin;
-use generation_core::GenerationControlsPlugin;
+use generation_core::{GenerationControlsPlugin, PointCloudRenderPlugin};
 use plants_generator::PlantsPlugin;
 
 fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
+            PointCloudRenderPlugin,
             GenerationControlsPlugin::default(),
             CameraPlugin::new(Vec3::new(0.0, 3.0, 0.0), 60.0),
             PlantsPlugin::default(),

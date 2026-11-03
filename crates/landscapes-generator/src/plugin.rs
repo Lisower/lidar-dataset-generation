@@ -24,7 +24,7 @@ use bevy_utils::cameras::{OrbitCamera, map_overview_radius};
 use bevy_utils::visuals::lighting::sun_shadows;
 use generation_core::general::RegenerationRequest;
 use generation_core::seeds::GlobalSeed;
-use generation_core::{load_preset_config, Seed, ViewMode, PresetStore};
+use generation_core::{PresetStore, Seed, ViewMode, load_preset_config};
 
 use crate::generation::landscape::generate;
 use crate::generation::{Landscape, LandscapeConfig, LandscapePreset, resolve};

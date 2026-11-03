@@ -25,16 +25,15 @@ use bevy_utils::visuals::lighting::sun_shadows;
 use bevy_utils::visuals::materials::material;
 use bevy_utils::visuals::meshes::box_mesh;
 use generation_core::general::RegenerationRequest;
-use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
+use generation_core::point_clouds::visual::spawn_point_cloud;
 use generation_core::seeds::GlobalSeed;
-use generation_core::{load_preset_config, PointClass, PointCloud, Seed, ViewMode, PresetStore};
+use generation_core::{PointClass, PointCloud, PresetStore, Seed, ViewMode, load_preset_config};
 
 use crate::generation::{GenerationMode, PlantConfig, PlantPreset, PlantScene, resolve};
 use crate::visual::{PointCloudEntity, VisualMesh, spawn_plant_scene};
 
 /// Подсказка об управлении.
-const HELP: &str =
-    "[Ctrl+S] пресеты  ·  [M] режим  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
+const HELP: &str = "[Ctrl+S] пресеты  ·  [M] режим  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
 
 /// Состояние текущей сцены растений.
 #[derive(Resource, Default)]
@@ -192,14 +191,8 @@ fn setup_scene(
     ));
 
     // Облако точек земли (ровная сетка на уровне y = 0).
-    let ground_cloud = meshes.add(point_cloud_mesh(&ground_point_cloud()));
-    let ground_cloud_material = materials.add(point_cloud_material());
-    commands.spawn((
-        Mesh3d(ground_cloud),
-        MeshMaterial3d(ground_cloud_material),
-        PointCloudEntity,
-        Visibility::default(),
-    ));
+    let ground_cloud = spawn_point_cloud(&mut commands, &mut meshes, &ground_point_cloud());
+    commands.entity(ground_cloud).insert(PointCloudEntity);
 
     spawn_info_panel(&mut commands, &asset_server);
 
@@ -290,11 +283,7 @@ fn regenerate_plants(
 
 /// Конфигурация из случайно выбранного пресета (из файла `config.ron`),
 /// либо fallback на `resolve(preset, seed)`.
-fn resolve_config(
-    seed: Seed,
-    preset: PlantPreset,
-    store: Option<&PresetStore>,
-) -> PlantConfig {
+fn resolve_config(seed: Seed, preset: PlantPreset, store: Option<&PresetStore>) -> PlantConfig {
     if let Some(store) = store {
         if let Some(meta) = store.random() {
             if let Some(mut config) = load_preset_config::<PlantConfig>(meta) {
@@ -328,13 +317,21 @@ fn update_info(
         scene.preset.label(),
         scene.seed
     ));
-    lines.push(format!("Режим: {} · объектов: {}", scene.mode.label(), scene.object_count()));
+    lines.push(format!(
+        "Режим: {} · объектов: {}",
+        scene.mode.label(),
+        scene.object_count()
+    ));
 
     // Состав по типу.
     match scene.preset.plant_type() {
         crate::generation::PlantType::Grass => {
             let blades: usize = scene.tufts.iter().map(|t| t.tuft.blade_count).sum();
-            lines.push(format!("Пучков травы: {} · травинок: {}", scene.tufts.len(), blades));
+            lines.push(format!(
+                "Пучков травы: {} · травинок: {}",
+                scene.tufts.len(),
+                blades
+            ));
         }
         crate::generation::PlantType::Tree | crate::generation::PlantType::Bush => {
             let branches: usize = scene.plants.iter().map(|p| p.plant.branch_count).sum();

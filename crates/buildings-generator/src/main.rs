@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy_utils::cameras::CameraPlugin;
 use bevy_utils::preset_selector::PresetSelectorPlugin;
 use buildings_generator::BuildingPlugin;
-use generation_core::GenerationControlsPlugin;
+use generation_core::{GenerationControlsPlugin, PointCloudRenderPlugin};
 
 fn main() {
     use buildings_generator::generation::{BuildingConfig, BuildingPreset};
@@ -25,7 +25,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !args.is_empty() {
         if args.len() != 2 || args[0] != "--preset" {
-            eprintln!("Usage: buildings-generator [--preset rectangular|l-shaped|annex|apartment|skyscraper]");
+            eprintln!(
+                "Usage: buildings-generator [--preset rectangular|l-shaped|annex|apartment|skyscraper]"
+            );
             std::process::exit(2);
         }
         config.preset = match args[1].as_str() {
@@ -43,6 +45,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
+            PointCloudRenderPlugin,
             GenerationControlsPlugin::default(),
             CameraPlugin::new(Vec3::new(0.0, 3.0, 0.0), 60.0),
             BuildingPlugin { config },

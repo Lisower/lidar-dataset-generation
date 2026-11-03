@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy_utils::cameras::CameraPlugin;
 use bevy_utils::preset_selector::PresetSelectorPlugin;
-use generation_core::{GenerationControlsPlugin, Seed};
+use generation_core::{GenerationControlsPlugin, PointCloudRenderPlugin, Seed};
 use terrains_generator::TerrainPreset;
 
 fn main() {
@@ -46,6 +46,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
+            PointCloudRenderPlugin,
             GenerationControlsPlugin { initial_seed: seed },
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 145.0),
             viewer::TerrainViewerPlugin {
