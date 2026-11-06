@@ -43,9 +43,15 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# --- Десктопный раннер датасетов ---
+# --- Десктопный раннер датасетов (Tauri + Vue) ---
+# Зависимости и полноценная сборка фронтенда: собираются локально из
+# package.json, в репозитории хранится только заглушка ui/dist/index.html,
+# чтобы cargo check/test работали до npm run build.
 crates/lidar-dataset-runner/ui/node_modules/
 crates/lidar-dataset-runner/ui/dist/*
 !crates/lidar-dataset-runner/ui/dist/index.html
+# Генерируемые tauri-build схемы и артефакты упаковки.
 crates/lidar-dataset-runner/gen/
+crates/lidar-dataset-runner/.tauri/
+# Каталог вывода датасетов по умолчанию (см. README).
 /dataset/
