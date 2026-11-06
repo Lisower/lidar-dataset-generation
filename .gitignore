@@ -48,4 +48,4 @@ crates/lidar-dataset-runner/ui/node_modules/
 crates/lidar-dataset-runner/ui/dist/*
 !crates/lidar-dataset-runner/ui/dist/index.html
 crates/lidar-dataset-runner/gen/
-dataset/
+/dataset/
