@@ -6,6 +6,7 @@
 //! `AppHandle`, поэтому тестируется обычным `cargo test`.
 
 pub mod dataset;
+pub mod error;
 
 /// Запустить десктопное приложение.
 ///

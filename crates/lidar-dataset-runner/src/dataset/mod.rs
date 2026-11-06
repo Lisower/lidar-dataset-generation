@@ -5,6 +5,7 @@
 //! — флагом `AtomicBool`. Поэтому всё здесь тестируется обычным `cargo test`.
 
 pub mod catalog;
+pub mod recipe;
 
 #[cfg(test)]
 pub(crate) mod test_support;
