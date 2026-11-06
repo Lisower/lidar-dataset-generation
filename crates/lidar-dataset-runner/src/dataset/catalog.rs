@@ -69,7 +69,15 @@ impl Catalog {
     }
 
     /// Метаданные пресета категории (с путём к `config.ron`).
+    ///
+    /// Пресет считается доступным, только если он есть в категории каталога:
+    /// так отфильтрованный или очищенный каталог действительно перестаёт
+    /// разрешать пресеты, а не обходит собственный список.
     pub fn meta(&self, category: &str, id: &str) -> Option<PresetMeta> {
+        let known = self.category(category).iter().any(|p| p.id == id);
+        if !known {
+            return None;
+        }
         self.store(category).meta(id).cloned()
     }
 }

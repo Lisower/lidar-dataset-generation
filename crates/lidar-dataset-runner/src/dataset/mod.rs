@@ -6,6 +6,7 @@
 
 pub mod catalog;
 pub mod export;
+pub mod job;
 pub mod merge;
 pub mod recipe;
 pub mod scene;
