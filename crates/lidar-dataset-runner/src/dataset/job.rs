@@ -270,4 +270,72 @@ mod tests {
         assert!(points.windows(2).all(|w| w[1] >= w[0]), "{points:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn full_run_writes_parseable_xyz_with_all_four_classes() {
+        use generation_core::PointClass;
+
+        let dir = target_dir("dataset-job-integration");
+        let _ = std::fs::remove_dir_all(&dir);
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 12648430,
+            landscape: "river".into(),
+            max_slope_deg: 30.0,
+            elements: vec![
+                ElementSpec {
+                    kind: ElementKind::Building,
+                    preset_id: "rectangular".into(),
+                    count: 1,
+                },
+                ElementSpec {
+                    kind: ElementKind::Tree,
+                    preset_id: "deciduous-tree".into(),
+                    count: 1,
+                },
+                ElementSpec {
+                    kind: ElementKind::Bush,
+                    preset_id: "bush".into(),
+                    count: 1,
+                },
+                ElementSpec {
+                    kind: ElementKind::Grass,
+                    preset_id: "tall-grass".into(),
+                    count: 4,
+                },
+            ],
+        };
+
+        let mut progress = 0u32;
+        let report = run_batch(&catalog, &recipe, &options(dir.clone(), "integration"), &mut |_| {
+            progress += 1
+        });
+        assert_eq!(progress, 1);
+        assert_eq!(report.scenes.len(), 1);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+        let text = std::fs::read_to_string(dir.join("scene-0000.xyz")).unwrap();
+        let mut classes = std::collections::BTreeSet::new();
+        let mut parsed = 0usize;
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 4, "строка не в формате `класс x y z`: {line}");
+            classes.insert(fields[0].parse::<u8>().unwrap());
+            let x: f32 = fields[1].parse().unwrap();
+            let y: f32 = fields[2].parse().unwrap();
+            assert!(x.abs() <= 60.0 && y.abs() <= 60.0, "точка вне карты: {line}");
+            parsed += 1;
+        }
+        assert_eq!(parsed as u64, report.scenes[0].points);
+        for class in [
+            PointClass::Ground,
+            PointClass::Building,
+            PointClass::Vegetation,
+        ] {
+            assert!(classes.contains(&class.code()), "нет класса {}", class.label());
+        }
+        assert!(classes.contains(&PointClass::Water.code()), "нет класса water");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
