@@ -47,11 +47,18 @@ pub fn write_scene(
         .map_err(|source| RunnerError::io(output_dir, source))?;
 
     let paths = scene_paths(output_dir, stats.index);
-    write_xyz(cloud, &paths.xyz).map_err(|source| RunnerError::io(&paths.xyz, source))?;
+    // Пишем через временный файл и переименовываем: прерванная запись не должна
+    // оставить в каталоге обрезанный `.xyz`, который выглядит как готовый файл.
+    let partial = paths.xyz.with_extension("xyz.partial");
+    write_xyz(cloud, &partial).map_err(|source| RunnerError::io(&partial, source))?;
 
-    let bytes = std::fs::metadata(&paths.xyz)
-        .map_err(|source| RunnerError::io(&paths.xyz, source))?
+    let bytes = std::fs::metadata(&partial)
+        .map_err(|source| RunnerError::io(&partial, source))?
         .len();
+    std::fs::rename(&partial, &paths.xyz).map_err(|source| {
+        let _ = std::fs::remove_file(&partial);
+        RunnerError::io(&paths.xyz, source)
+    })?;
 
     let mut saved = stats.clone();
     saved.file = file_name(&paths.xyz);
@@ -147,6 +154,33 @@ mod tests {
         assert_eq!(saved.points, 2);
         assert_eq!(saved.bytes, bytes);
         assert_eq!(saved.file, "scene-0000.xyz");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_partial_xyz_survives_a_successful_write() {
+        let dir = target_dir("dataset-export-partial");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut cloud = PointCloud::new(PointClass::Ground);
+        cloud.push(Vec3::ZERO);
+        write_scene(&dir, &cloud, &sample_stats(1)).unwrap();
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".partial"))
+            .collect();
+        assert!(leftovers.is_empty(), "остались временные файлы: {leftovers:?}");
+
+        // Остаток прерванной записи перезаписывается, а не копится в каталоге.
+        let stale = dir.join("scene-0000.xyz.partial");
+        std::fs::write(&stale, b"truncated").unwrap();
+        write_scene(&dir, &cloud, &sample_stats(0)).unwrap();
+        assert!(!stale.exists(), "временный файл должен исчезнуть");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("scene-0000.xyz")).unwrap(),
+            to_xyz(&cloud)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
