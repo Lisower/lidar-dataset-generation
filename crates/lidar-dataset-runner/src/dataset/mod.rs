@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod merge;
 pub mod recipe;
 pub mod scene;
+pub mod stats;
 
 #[cfg(test)]
 pub(crate) mod test_support;
