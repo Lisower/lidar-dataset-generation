@@ -18,7 +18,7 @@ use generation_core::presets::load_preset_config;
 use generation_core::{Seed};
 use landscapes_generator::{Landscape, LandscapeConfig, LandscapePreset, generation::landscape};
 use plants_generator::generation::grass::generate_tuft;
-use plants_generator::{GrassTuft, Plant, PlantConfig};
+use plants_generator::{GrassTuft, Plant, PlantConfig, PlantType};
 use rand::RngExt;
 use terrains_generator::{PlacementMap, PlacementRules};
 
@@ -253,26 +253,140 @@ fn place_buildings(
     Ok(placed)
 }
 
-/// Поставить деревья или кусты (пока не реализовано).
+/// Поставить деревья или кусты.
+///
+/// Тип пресета обязан совпадать с видом элемента: прогон травяного конфига
+/// через `Plant::generate` даёт пустые ветки, а дерева через `generate_tuft` —
+/// мусор (`DESIGN.md` §6.1). Поэтому пара проверяется по
+/// `PlantConfig.preset.plant_type()` до генерации и отсекается ошибкой.
 fn place_plants(
-    _kind: ElementKind,
-    _catalog: &Catalog,
-    _recipe: &Recipe,
-    _scene_seed: Seed,
-    _map: &mut PlacementMap<'_>,
+    kind: ElementKind,
+    catalog: &Catalog,
+    recipe: &Recipe,
+    scene_seed: Seed,
+    map: &mut PlacementMap<'_>,
 ) -> Result<Vec<Placed<Plant>>, RunnerError> {
-    Ok(Vec::new())
+    let Some(spec) = element(recipe, kind) else {
+        return Ok(Vec::new());
+    };
+    let base = plant_config(catalog, &spec.preset_id)?;
+    if Some(base.preset.plant_type()) != expected_plant_type(kind) {
+        return Err(RunnerError::UnsupportedPreset {
+            id: spec.preset_id.clone(),
+        });
+    }
+
+    let clusters = clusters(scene_seed, plant_cluster_count(kind));
+    let cluster_radius = plant_cluster_radius(kind);
+    let mut rng = scene_seed.with_label(kind.key()).rng();
+    let mut placed = Vec::new();
+
+    for index in 0..spec.count {
+        let obj_seed = scene_seed.with_label(kind.key()).child(u64::from(index));
+        let plant = Plant::generate(&base.with_seed(obj_seed));
+        let rules = PlacementRules {
+            radius: plant.extent.max(0.1),
+            clearance: plant_clearance(kind),
+            max_slope_deg: 30.0,
+        };
+        for _ in 0..PLANT_ATTEMPTS {
+            let candidate = vegetation_candidate(&mut rng, &clusters, cluster_radius);
+            if let Some(positioned) = map.try_place(candidate, rules) {
+                placed.push(Placed {
+                    position: positioned.position,
+                    rotation: rng.random_range(0.0..TAU),
+                    item: plant,
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(placed)
 }
 
-/// Поставить траву (пока не реализовано).
+/// Поставить траву.
+///
+/// Трава ставится последней: пучки мелкие, и на тесной карте они должны
+/// заполнять остатки, а не отбирать место у зданий и деревьев.
 fn place_grass(
-    _catalog: &Catalog,
-    _recipe: &Recipe,
-    _scene_seed: Seed,
-    _map: &mut PlacementMap<'_>,
+    catalog: &Catalog,
+    recipe: &Recipe,
+    scene_seed: Seed,
+    map: &mut PlacementMap<'_>,
 ) -> Result<Vec<Placed<GrassTuft>>, RunnerError> {
-    Ok(Vec::new())
+    let Some(spec) = element(recipe, ElementKind::Grass) else {
+        return Ok(Vec::new());
+    };
+    let base = plant_config(catalog, &spec.preset_id)?;
+    if base.preset.plant_type() != PlantType::Grass {
+        return Err(RunnerError::UnsupportedPreset {
+            id: spec.preset_id.clone(),
+        });
+    }
+
+    let clusters = clusters(scene_seed.with_label("grass-anchors-seed"), GRASS_CLUSTERS);
+    let mut rng = scene_seed.with_label("grass-positions").rng();
+    let mut placed = Vec::new();
+
+    for index in 0..spec.count {
+        let tuft_seed = scene_seed.with_label("grass-model").child(u64::from(index));
+        let tuft = generate_tuft(&base.with_seed(tuft_seed), tuft_seed);
+        let rules = PlacementRules {
+            radius: tuft.radius.max(0.05),
+            clearance: 0.02,
+            max_slope_deg: 35.0,
+        };
+        for _ in 0..GRASS_ATTEMPTS {
+            let candidate = vegetation_candidate(&mut rng, &clusters, GRASS_CLUSTER_RADIUS_M);
+            if let Some(positioned) = map.try_place(candidate, rules) {
+                placed.push(Placed {
+                    position: positioned.position,
+                    rotation: rng.random_range(0.0..TAU),
+                    item: tuft,
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(placed)
 }
+
+/// Тип растения, который обязан быть у пресета этого вида элемента.
+fn expected_plant_type(kind: ElementKind) -> Option<PlantType> {
+    match kind {
+        ElementKind::Building => None,
+        ElementKind::Tree => Some(PlantType::Tree),
+        ElementKind::Bush => Some(PlantType::Bush),
+        ElementKind::Grass => Some(PlantType::Grass),
+    }
+}
+
+/// Сколько кластеров растительности используется для вида элемента.
+fn plant_cluster_count(kind: ElementKind) -> usize {
+    match kind {
+        ElementKind::Bush => BUSH_CLUSTERS,
+        _ => TREE_CLUSTERS,
+    }
+}
+
+/// Радиус кластера растительности для вида элемента.
+fn plant_cluster_radius(kind: ElementKind) -> f32 {
+    match kind {
+        ElementKind::Tree => TREE_CLUSTER_RADIUS_M,
+        _ => GRASS_CLUSTER_RADIUS_M,
+    }
+}
+
+/// Зазор вокруг объекта при расстановке.
+fn plant_clearance(kind: ElementKind) -> f32 {
+    match kind {
+        ElementKind::Bush => 0.2,
+        _ => 0.5,
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -418,4 +532,112 @@ mod tests {
         assert_eq!(scene.requested["building"], 300);
     }
 
+    #[test]
+    fn vegetation_is_placed_and_keeps_class() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 11,
+            landscape: "plain".into(),
+            max_slope_deg: 30.0,
+            elements: vec![
+                ElementSpec {
+                    kind: ElementKind::Tree,
+                    preset_id: "deciduous-tree".into(),
+                    count: 6,
+                },
+                ElementSpec {
+                    kind: ElementKind::Bush,
+                    preset_id: "bush".into(),
+                    count: 4,
+                },
+                ElementSpec {
+                    kind: ElementKind::Grass,
+                    preset_id: "tall-grass".into(),
+                    count: 30,
+                },
+            ],
+        };
+        let scene = compose(&catalog, &recipe, 0).unwrap();
+        assert_eq!(scene.trees.len(), 6);
+        assert!(scene.bushes.len() <= 4);
+        assert!(!scene.grass.is_empty());
+        let cloud = scene_cloud(&scene);
+        assert!(
+            cloud
+                .points
+                .iter()
+                .any(|p| p.class == PointClass::Vegetation)
+        );
+        let tree = &scene.trees[0];
+        let base_z = tree.position.z;
+        let lowest = tree
+            .item
+            .point_cloud
+            .points
+            .iter()
+            .map(|p| p.position.z)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            lowest.abs() < 0.5,
+            "облако растения начинается от основания: {lowest}"
+        );
+        let ground = scene
+            .landscape
+            .heightfield
+            .height_at(tree.position.x, tree.position.y);
+        assert!((base_z - ground).abs() < 0.01);
+        assert_eq!(scene.requested["tree"], 6);
+        assert_eq!(scene.requested["bush"], 4);
+        assert_eq!(scene.requested["grass"], 30);
+    }
+
+    #[test]
+    fn grass_preset_is_refused_for_a_tree_element() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 1,
+            landscape: "plain".into(),
+            max_slope_deg: 30.0,
+            elements: vec![ElementSpec {
+                kind: ElementKind::Tree,
+                preset_id: "tall-grass".into(),
+                count: 2,
+            }],
+        };
+        // Композиция не паникует на несовместимой паре: генератор растения
+        // строит не то, что ждёт расстановка, поэтому пара отсекается ошибкой.
+        assert!(matches!(
+            compose(&catalog, &recipe, 0),
+            Err(RunnerError::UnsupportedPreset { .. })
+        ));
+    }
+
+    #[test]
+    fn vegetation_clouds_are_deterministic() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 21,
+            landscape: "plain".into(),
+            max_slope_deg: 30.0,
+            elements: vec![
+                ElementSpec {
+                    kind: ElementKind::Tree,
+                    preset_id: "deciduous-tree".into(),
+                    count: 3,
+                },
+                ElementSpec {
+                    kind: ElementKind::Grass,
+                    preset_id: "sparse-grass".into(),
+                    count: 10,
+                },
+            ],
+        };
+        let a = scene_cloud(&compose(&catalog, &recipe, 0).unwrap());
+        let b = scene_cloud(&compose(&catalog, &recipe, 0).unwrap());
+        assert_eq!(to_xyz(&a), to_xyz(&b));
+    }
 }
+
