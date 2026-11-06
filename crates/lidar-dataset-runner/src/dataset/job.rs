@@ -18,7 +18,7 @@ use super::export::{write_run_report, write_scene};
 use super::merge::scene_cloud;
 use super::recipe::Recipe;
 use super::scene::compose;
-use super::stats::{ProgressEvent, RunReport, SceneError, SceneStats, Totals, scene_stats};
+use super::stats::{ProgressEvent, RunReport, SceneError, Totals, scene_stats};
 
 /// Параметры запуска батча.
 pub struct BatchOptions {
@@ -139,22 +139,6 @@ fn resolved_presets(catalog: &Catalog, recipe: &Recipe) -> std::collections::BTr
         insert(element.kind.category(), &element.preset_id);
     }
     resolved
-}
-
-/// Удобный конструктор статистики для отчётов вне батча.
-pub fn stats_of(index: u32, seed: u64, points: u64) -> SceneStats {
-    SceneStats {
-        index,
-        seed,
-        file: format!("scene-{index:04}.xyz"),
-        bytes: 0,
-        points,
-        by_class: Default::default(),
-        objects: Default::default(),
-        bbox: Default::default(),
-        elapsed_ms: 0,
-        frame: super::stats::FRAME_Z_UP.to_string(),
-    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ import {
   getCatalog,
   getDefaultOutputDir,
   getPointClasses,
+  onFailed,
   onFinished,
   onProgress,
   startGeneration,
@@ -111,6 +112,13 @@ onMounted(async () => {
   await loadCatalog();
 
   unlisten.push(await onProgress((event) => (progress.value = event)));
+  unlisten.push(
+    await onFailed((message) => {
+      failure.value = message;
+      jobId.value = null;
+      state.value = "failed";
+    }),
+  );
   unlisten.push(
     await onFinished((finished) => {
       report.value = finished;

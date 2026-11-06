@@ -137,13 +137,24 @@ pub async fn start_generation(
         cancel,
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let mut on_progress = |event: &crate::dataset::stats::ProgressEvent| {
-            let _ = handle.emit(EVENT_PROGRESS, event.clone());
-        };
-        let report = run_batch(&catalog, &recipe, &options, &mut on_progress);
-        let state = handle.state::<AppState>();
-        state.set_job(None);
-        let _ = handle.emit(EVENT_FINISHED, report);
+        let outcome = guarded(|| {
+            let mut on_progress = |event: &crate::dataset::stats::ProgressEvent| {
+                let _ = handle.emit(EVENT_PROGRESS, event.clone());
+            };
+            run_batch(&catalog, &recipe, &options, &mut on_progress)
+        });
+        handle.state::<AppState>().set_job(None);
+        match outcome {
+            Ok(report) => {
+                let _ = handle.emit(EVENT_FINISHED, report);
+            }
+            // Генератор — библиотечный код, который в теории может запаниковать.
+            // Без этого окно осталось бы в состоянии «идёт» навсегда, поэтому
+            // паника превращается в событие ошибки.
+            Err(message) => {
+                let _ = handle.emit(EVENT_FAILED, message);
+            }
+        }
     });
 
     Ok(job_id)
@@ -158,6 +169,28 @@ pub fn cancel_generation(state: State<'_, AppState>, job_id: String) -> bool {
             true
         }
         None => false,
+    }
+}
+
+/// Выполнить тяжёлую работу, превратив панику в текст ошибки.
+///
+/// Паника в фоновой задаче иначе не доходит до интерфейса: `JoinHandle`
+/// остаётся без ответа, и окно навсегда остаётся в состоянии «идёт».
+fn guarded<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(value) => Ok(value),
+        Err(payload) => Err(panic_message(payload.as_ref())),
+    }
+}
+
+/// Текст паники из `Box<dyn Any>`.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        format!("генерация прервана паникой: {text}")
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        format!("генерация прервана паникой: {text}")
+    } else {
+        "генерация прервана паникой".to_string()
     }
 }
 
@@ -196,6 +229,19 @@ fn hex_color(class: PointClass) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crashing_job_is_reported_instead_of_hanging() {
+        let outcome = guarded(|| panic!("генератор упал"));
+        assert!(outcome.is_err(), "паника должна стать сообщением об ошибке");
+        let message = outcome.unwrap_err();
+        assert!(message.contains("генератор упал"), "{message}");
+    }
+
+    #[test]
+    fn a_normal_job_returns_its_value() {
+        assert_eq!(guarded(|| 7u8), Ok(7));
+    }
 
     #[test]
     fn point_classes_expose_codes_colors_and_russian_names() {
