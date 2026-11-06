@@ -202,14 +202,55 @@ fn clusters(seed: Seed, count: usize) -> Vec<Vec2> {
         .collect()
 }
 
-/// Поставить здания (пока не реализовано).
+/// Поставить здания.
+///
+/// Здания ставятся первыми: у них самая большая занимаемая площадь, и на
+/// тесной карте растительности проще найти место вокруг них, чем наоборот.
+/// Каждое здание генерируется со своим дочерним сидом, поворот берётся из
+/// отдельного потока случайности.
 fn place_buildings(
-    _catalog: &Catalog,
-    _recipe: &Recipe,
-    _scene_seed: Seed,
-    _map: &mut PlacementMap<'_>,
+    catalog: &Catalog,
+    recipe: &Recipe,
+    scene_seed: Seed,
+    map: &mut PlacementMap<'_>,
 ) -> Result<Vec<Placed<Building>>, RunnerError> {
-    Ok(Vec::new())
+    let Some(spec) = element(recipe, ElementKind::Building) else {
+        return Ok(Vec::new());
+    };
+    let base = building_config(catalog, &spec.preset_id)?;
+
+    let mut positions = scene_seed.with_label("building-positions").rng();
+    let mut rotations = scene_seed.with_label("building-rotation").rng();
+    let mut placed = Vec::new();
+
+    for index in 0..spec.count {
+        let cfg = BuildingConfig {
+            seed: scene_seed.child(10 + u64::from(index)),
+            ..base.clone()
+        };
+        let building = Building::generate(&cfg);
+        let rules = PlacementRules {
+            radius: building.occupancy.shape.bounding_radius(),
+            clearance: 1.5,
+            max_slope_deg: recipe.max_slope_deg,
+        };
+        for _ in 0..BUILDING_ATTEMPTS {
+            let candidate = Vec2::new(
+                positions.random_range(-BUILDING_SPREAD_M..BUILDING_SPREAD_M),
+                positions.random_range(-BUILDING_SPREAD_M..BUILDING_SPREAD_M),
+            );
+            if let Some(positioned) = map.try_place(candidate, rules) {
+                placed.push(Placed {
+                    position: positioned.position,
+                    rotation: rotations.random_range(0.0..TAU),
+                    item: building,
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(placed)
 }
 
 /// Поставить деревья или кусты (пока не реализовано).
@@ -320,4 +361,61 @@ mod tests {
             assert!(p.abs().max_element() <= 50.0, "{p:?}");
         }
     }
+
+    #[test]
+    fn buildings_are_placed_once_and_keep_class() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 7,
+            landscape: "plain".into(),
+            max_slope_deg: 10.0,
+            elements: vec![ElementSpec {
+                kind: ElementKind::Building,
+                preset_id: "rectangular".into(),
+                count: 3,
+            }],
+        };
+        let scene = compose(&catalog, &recipe, 0).unwrap();
+        assert!(scene.buildings.len() <= 3);
+        assert!(!scene.buildings.is_empty(), "здание должно поместиться");
+        let cloud = scene_cloud(&scene);
+        let building_points = cloud
+            .points
+            .iter()
+            .filter(|p| p.class == PointClass::Building)
+            .count();
+        assert!(building_points > 0);
+        let b = &scene.buildings[0];
+        let ground = scene
+            .landscape
+            .heightfield
+            .height_at(b.position.x, b.position.y);
+        assert!((b.position.z - ground).abs() < 0.01);
+    }
+
+    #[test]
+    fn excessive_buildings_fit_or_are_reported_not_hung() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 3,
+            landscape: "plain".into(),
+            max_slope_deg: 20.0,
+            elements: vec![ElementSpec {
+                kind: ElementKind::Building,
+                preset_id: "apartment-block".into(),
+                count: 300,
+            }],
+        };
+        let started = std::time::Instant::now();
+        let scene = compose(&catalog, &recipe, 0).unwrap();
+        assert!(
+            started.elapsed().as_secs() < 60,
+            "расстановка не должна зависать"
+        );
+        assert!(scene.buildings.len() <= 300);
+        assert_eq!(scene.requested["building"], 300);
+    }
+
 }
