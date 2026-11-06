@@ -67,6 +67,9 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::Juniper {
             return Self::build_juniper(config);
         }
+        if config.preset == PlantPreset::CactusSmall {
+            return Self::build_cactus_small(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -427,6 +430,117 @@ impl PlantSkeleton {
                 previous_trunk_point = trunk_idx;
             }     
             
+            Self::finish(&mut skeleton);
+            skeleton
+        }
+
+        /// Специальное построение маленького кустового кактуса:
+        /// несколько толстых ребристых побегов растут отдельной группой от земли.
+        fn build_cactus_small(config: &PlantConfig) -> Self {
+            let mut rng = config.seed.with_label("cactus_small_skeleton").rng();
+            let mut skeleton = Self::default();
+
+            // Служебная центральная точка растения.
+            skeleton.points.push(SkeletonPoint {
+                position: Vec3::ZERO,
+                level: 0,
+                branch_id: 0,
+                radius: 0.0,
+                taper: 1.0,
+                children_count: 0,
+            });
+
+            // Количество отдельных мясистых побегов меняется от seed.
+            let shoot_count = rng.random_range(6usize..=9usize);
+
+            for shoot_index in 0..shoot_count {
+                if skeleton.points.len() >= config.max_branches {
+                    break;
+                }
+
+                // Центральные побеги располагаются ближе к середине,
+                // остальные образуют вокруг них компактную группу.
+                let base_radius = if shoot_index < 2 {
+                    rng.random_range(0.0_f32..=0.07_f32)
+                } else {
+                    rng.random_range(0.22_f32..=0.40_f32)
+                };
+
+                let base_angle =
+                    shoot_index as f32 * (std::f32::consts::TAU / shoot_count as f32)
+                        + rng.random_range(0.08_f32..=0.18_f32);
+
+                let start_position = Vec3::new(
+                    base_radius * base_angle.cos(),
+                    base_radius * base_angle.sin(),
+                    0.0,
+                );
+
+                // Центральные побеги выше, наружные немного короче.
+                let height = if shoot_index < 2 {
+                    rng.random_range(0.95_f32..=1.30_f32)
+                } else {
+                    rng.random_range(0.55_f32..=1.05_f32)
+                };
+
+                // Небольшой наклон наружу делает куст естественнее,
+                // но побеги остаются преимущественно вертикальными.
+                let lean = if shoot_index < 2 {
+                    rng.random_range(0.0_f32..=0.04_f32)
+                } else {
+                    rng.random_range(0.08_f32..=0.18_f32)
+                };
+
+                let lean_angle =
+                    base_angle + rng.random_range(-0.25_f32..=0.25_f32);
+
+                let horizontal = height * lean;
+
+                let end_position = Vec3::new(
+                    start_position.x + horizontal * lean_angle.cos(),
+                    start_position.y + horizontal * lean_angle.sin(),
+                    height,
+                );
+
+                // Немного различаем толщину отдельных побегов.
+                let radius = if shoot_index < 2 {
+                    rng.random_range(0.14_f32..=0.18_f32)
+                } else {
+                    rng.random_range(0.10_f32..=0.16_f32)
+                };
+
+                // Отдельная точка основания нужна, чтобы побеги действительно
+                // начинались в разных местах, а не сходились в один центр.
+                let base_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: start_position,
+                    level: 0,
+                    branch_id: shoot_index,
+                    radius,
+                    taper: 0.92,
+                    children_count: 1,
+                });
+
+                let end_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: end_position,
+                    level: 0,
+                    branch_id: shoot_index,
+                    radius,
+                    taper: rng.random_range(0.86_f32..=0.93_f32),
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from: base_idx,
+                    to: end_idx,
+                });
+            }
+
+            skeleton.points[0].children_count = shoot_count;
+
             Self::finish(&mut skeleton);
             skeleton
         }

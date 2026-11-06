@@ -35,6 +35,15 @@ pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage 
         build_spruce_needles(skeleton, config)
     } else if config.preset == PlantPreset::Juniper {
         build_juniper_needles(skeleton, config)
+    } else if config.preset == PlantPreset::CactusSmall {
+    let mut foliage = build_cactus_needles(skeleton, config);
+    let flower = build_cactus_flower(skeleton, config);
+
+    foliage.faces.extend(flower.faces);
+    foliage.cloud.extend(flower.cloud);
+    foliage.count += flower.count;
+
+    foliage 
     } else {
         build_leafy(skeleton, config)
     }
@@ -267,7 +276,203 @@ fn build_juniper_needles(
     foliage
 }
 
+/// Один небольшой цветок на верхушке бокового побега маленького кактуса.
+pub(super) fn build_cactus_flower(
+    skeleton: &PlantSkeleton,
+    _config: &PlantConfig,
+) -> Foliage {
+    let mut foliage = Foliage::default();
+
+    if skeleton.segments.is_empty() {
+        return foliage;
+    }
+
+    // Выбираем один из боковых побегов:
+    // не самый высокий центральный и не самый маленький.
+    let mut tips: Vec<Vec3> = skeleton
+        .segments
+        .iter()
+        .map(|segment| skeleton.points[segment.to].position)
+        .collect();
+
+    tips.sort_by(|a, b| {
+        b.z.partial_cmp(&a.z)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let Some(tip) = tips.get(2).copied() else {
+        return foliage;
+    };
+
+    // Цветок располагается немного выше округлой макушки кактуса.
+    let center = tip - Vec3::Z * 0.015;
+
+    let petal_count = 7usize;
+    let petal_length = 0.11_f32;
+    let petal_width = 0.07_f32;
+
+    for i in 0..petal_count {
+        let angle =
+            i as f32 * std::f32::consts::TAU / petal_count as f32;
+
+        let radial = Vec3::new(angle.cos(), angle.sin(), 0.0);
+        let tangent = Vec3::new(-angle.sin(), angle.cos(), 0.0);
+
+        // Лепесток слегка приподнят вверх.
+        let outer =
+            center + radial * petal_length + Vec3::Z * 0.035;
+
+        let inner =
+            center - radial * 0.018;
+
+        let left =
+            center + radial * 0.045 + tangent * petal_width * 0.5;
+
+        let right =
+            center + radial * 0.045 - tangent * petal_width * 0.5;
+
+        foliage.faces.push(
+            Polygon::quad(
+                outer,
+                left,
+                inner,
+                right,
+            ),
+        );
+
+        foliage.cloud.push(center);
+        foliage.cloud.push(outer);
+
+        foliage.count += 1;
+    }
+
+        // Сердцевина цветка закрывает зелёную макушку кактуса.
+    let center_radius = 0.070_f32;
+    let center_z = center + Vec3::Z * 0.015;
+
+    for i in 0..petal_count {
+        let angle0 =
+            i as f32 * std::f32::consts::TAU / petal_count as f32;
+        let angle1 =
+            (i + 1) as f32 * std::f32::consts::TAU / petal_count as f32;
+
+        let p1 = center_z
+            + Vec3::new(angle0.cos(), angle0.sin(), 0.0) * center_radius;
+
+        let p2 = center_z
+            + Vec3::new(angle1.cos(), angle1.sin(), 0.0) * center_radius;
+
+        foliage.faces.push(
+            Polygon::triangle(center_z, p1, p2).oriented(Vec3::Z),
+        );
+    }
+
+    foliage
+}
+
 /// Листья-ромбики на терминальных ветках уровня >= `min_level`.
+pub(super) fn build_cactus_needles(skeleton: &PlantSkeleton, _config: &PlantConfig) -> Foliage {
+    let mut foliage = Foliage::default();
+
+    // Короткие иголки рядами вдоль каждого побега.
+    for segment in &skeleton.segments {
+        let from = skeleton.points[segment.from];
+        let to = skeleton.points[segment.to];
+
+        let branch = to.position - from.position;
+        let length = branch.length();
+
+        if length <= 0.001 {
+            continue;
+        }
+
+        let dir = branch.normalize();
+
+        // Базис вокруг побега.
+        let side0 = dir.cross(Vec3::Z).normalize_or_zero();
+        let side0 = if side0 == Vec3::ZERO {
+            Vec3::X
+        } else {
+            side0
+        };
+
+        let pitch = dir.cross(side0).normalize_or_zero();
+
+        // Несколько вертикальных рядов иголок вокруг кактуса.
+        let rib_count = 8usize;
+
+        // Иголки идут снизу вверх с небольшим интервалом.
+        let rows = ((length / 0.14).ceil() as usize).max(3);
+
+        for row in 1..rows {
+            let t = row as f32 / rows as f32;
+
+            // Не ставим иголки совсем у основания и на самой макушке.
+            if t < 0.10 || t > 0.88 {
+                continue;
+            }
+
+            let center = from.position + branch * t;
+
+            for rib in 0..rib_count {
+                let angle =
+                    rib as f32 * std::f32::consts::TAU / rib_count as f32;
+
+                let radial =
+                    side0 * angle.cos() + pitch * angle.sin();
+
+                // Примерный радиус побега.
+                let radius =
+                    from.radius + (to.radius - from.radius) * t;
+
+                let base = center + radial * radius * 1.08;
+
+                // Небольшая светлая колючка наружу и чуть вверх.
+                let needle_length =
+                    0.045_f32 + (row as f32 * 0.013 + rib as f32 * 0.009) % 0.055;
+
+                let tip =
+                    base + radial * needle_length + Vec3::Z * 0.012;
+
+                // Узкий треугольник вместо толстой ветки.
+                let tangent =
+                    (-side0 * angle.sin() + pitch * angle.cos())
+                        .normalize_or_zero();
+
+                let half_width = 0.005_f32;
+
+                let needle_base_left =
+                    base - tangent * half_width;
+
+                let needle_base_right =
+                    base + tangent * half_width;
+
+                let needle_tip_left =
+                    tip - tangent * 0.002;
+
+                let needle_tip_right =
+                    tip + tangent * 0.002;
+
+                foliage.faces.push(
+                    Polygon::quad(
+                        needle_base_left,
+                        needle_base_right,
+                        needle_tip_right,
+                        needle_tip_left,
+                    ),
+                );
+
+                foliage.cloud.push(base);
+                foliage.cloud.push(tip);
+
+                foliage.count += 1;
+            }
+        }
+    }
+    
+    foliage
+}
+
 fn build_leafy(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage {
     let mut rng = config.seed.with_label("foliage").rng();
     let cfg = &config.foliage;
@@ -275,7 +480,8 @@ fn build_leafy(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage {
     // Единственный способ размещения кроны — на терминальных ветках.
     let FoliagePlacement::Terminal { min_level } = cfg.placement;
 
-    let mut foliage = Foliage::default();
+    let mut foliage = Foliage::default();    
+
     for segment in &skeleton.segments {
         if skeleton.points[segment.to].level < min_level {
             continue;

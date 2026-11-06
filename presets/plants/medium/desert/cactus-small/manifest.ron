@@ -1,0 +1,6 @@
+(
+    id: "cactus-small",
+    name: "кактус маленький",
+    description: "",
+    kind: "cactus-small",
+)

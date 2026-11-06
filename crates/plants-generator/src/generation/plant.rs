@@ -16,7 +16,7 @@ use generation_core::point_clouds::primitives::{GridNoise, apply_noise};
 use generation_core::{PointCloud, Seed};
 
 use super::config::{PlantConfig, PlantPreset};
-use super::foliage::build_foliage;
+use super::foliage::{build_cactus_flower, build_cactus_needles, build_foliage};
 use super::part::Part;
 use super::skeleton::PlantSkeleton;
 
@@ -91,7 +91,15 @@ impl Plant {
 
             let (_, faces, cloud) = &mut by_color[bucket];
             let midpoint = p0 + offset * 0.5;
-            let polygons = if config.preset == PlantPreset::CactusLarge {
+            let polygons = if config.preset == PlantPreset::CactusSmall {
+                cactus_small_polygons(
+                    r0,
+                    r1,
+                    height,
+                    sides,
+                    axis,
+                )
+            } else if config.preset == PlantPreset::CactusLarge {
             // Небольшое перекрытие соседних сегментов закрывает щели
             // в местах изгиба рук кактуса.
             let joint_overlap = (r0.min(r1) * 0.65).min(0.16);
@@ -145,13 +153,43 @@ impl Plant {
 
         // --- листва ---
         let foliage = build_foliage(&skeleton, config);
-        let foliage_part = Part::new(
-            "листва",
-            config.foliage.color,
-            foliage.faces,
-            true, // листья рисуются с двух сторон
-            foliage.cloud,
-        );
+
+        let foliage_part = if config.preset == PlantPreset::CactusSmall {
+            let needles = build_cactus_needles(&skeleton, config);
+            let flower = build_cactus_flower(&skeleton, config);
+
+            let needles_part = Part::new(
+                "иголки",
+                Color::srgb(0.40, 0.314, 0.224),
+                needles.faces,
+                true,
+                needles.cloud,
+            );
+
+            let flower_part = Part::new(
+                "цветок",
+                config.foliage.color,
+                flower.faces,
+                true,
+                flower.cloud,
+            );
+
+            Part::group(
+                "листва",
+                config.foliage.color,
+                bevy::transform::components::Transform::IDENTITY,
+            )
+            .child(needles_part)
+            .child(flower_part)
+        } else {
+            Part::new(
+                "листва",
+                config.foliage.color,
+                foliage.faces,
+                true,
+                foliage.cloud,
+            )
+        };
 
         let root = Part::group(
             "растение",
@@ -224,6 +262,131 @@ fn branch_cone_cloud(
         }
     }
     out
+}
+
+/// Ребристая поверхность маленького кактуса
+/// с плавно закруглённой верхушкой.
+fn cactus_small_polygons(
+    r0: f32,
+    r1: f32,
+    height: f32,
+    sides: usize,
+    axis: Vec3,
+) -> Vec<Polygon> {
+    let (u, v) = basis(axis);
+
+    let rib_count = sides.max(6);
+    let vertex_count = rib_count * 2;
+    let angle_step = std::f32::consts::TAU / vertex_count as f32;
+
+    // Основная цилиндрическая часть заканчивается чуть ниже
+    // полной высоты — оставшееся место занимает округлая макушка.
+    let cap_height = r1.min(height * 0.22);
+    let body_height = (height - cap_height).max(height * 0.5);
+
+    let z_bottom = -height * 0.5;
+    let z_body_top = z_bottom + body_height;
+
+    let mut polys = Vec::new();
+
+    // Ребристая боковая поверхность основного побега.
+    for i in 0..vertex_count {
+        let next = (i + 1) % vertex_count;
+
+        let a0 = angle_step * i as f32;
+        let a1 = angle_step * next as f32;
+
+        let c0 = u * a0.cos() + v * a0.sin();
+        let c1 = u * a1.cos() + v * a1.sin();
+
+        let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
+        let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
+
+        let b0 = c0 * (r0 * relief0) + axis * z_bottom;
+        let b1 = c1 * (r0 * relief1) + axis * z_bottom;
+
+        let t0 = c0 * (r1 * relief0) + axis * z_body_top;
+        let t1 = c1 * (r1 * relief1) + axis * z_body_top;
+
+        let mid = (c0 * relief0 + c1 * relief1) * 0.5;
+
+        polys.push(
+            Polygon::quad(b0, b1, t1, t0)
+                .oriented(mid),
+        );
+    }
+
+    // Округлая верхушка из нескольких постепенно сужающихся колец.
+    let cap_rings = 4usize;
+
+    for ring in 0..cap_rings {
+        let t0 = ring as f32 / cap_rings as f32;
+        let t1 = (ring + 1) as f32 / cap_rings as f32;
+
+        let angle0 = t0 * std::f32::consts::FRAC_PI_2;
+        let angle1 = t1 * std::f32::consts::FRAC_PI_2;
+
+        let ring_r0 = r1 * angle0.cos();
+        let ring_r1 = r1 * angle1.cos();
+
+        let ring_z0 = z_body_top + cap_height * angle0.sin();
+        let ring_z1 = z_body_top + cap_height * angle1.sin();
+
+        for i in 0..vertex_count {
+            let next = (i + 1) % vertex_count;
+
+            let a0 = angle_step * i as f32;
+            let a1 = angle_step * next as f32;
+
+            let c0 = u * a0.cos() + v * a0.sin();
+            let c1 = u * a1.cos() + v * a1.sin();
+
+            let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
+            let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
+
+            let b0 =
+                c0 * (ring_r0 * relief0) + axis * ring_z0;
+            let b1 =
+                c1 * (ring_r0 * relief1) + axis * ring_z0;
+
+            let t0p =
+                c0 * (ring_r1 * relief0) + axis * ring_z1;
+            let t1p =
+                c1 * (ring_r1 * relief1) + axis * ring_z1;
+
+            let mid = (c0 * relief0 + c1 * relief1) * 0.5;
+
+            polys.push(
+                Polygon::quad(b0, b1, t1p, t0p)
+                    .oriented(mid),
+            );
+        }
+    }
+
+    // Нижняя крышка.
+    let center = axis * z_bottom;
+
+    for i in 0..vertex_count {
+        let next = (i + 1) % vertex_count;
+
+        let a0 = angle_step * i as f32;
+        let a1 = angle_step * next as f32;
+
+        let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
+        let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
+
+        let p0 = center
+            + (u * a0.cos() + v * a0.sin()) * (r0 * relief0);
+        let p1 = center
+            + (u * a1.cos() + v * a1.sin()) * (r0 * relief1);
+
+        polys.push(
+            Polygon::triangle(center, p0, p1)
+                .oriented(-axis),
+        );
+    }
+
+    polys
 }
 
 /// Ребристая поверхность кактуса:
