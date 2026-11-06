@@ -272,6 +272,61 @@ mod tests {
     }
 
     #[test]
+    fn demo_recipe_writes_two_scenes_with_expected_classes() {
+        use generation_core::PointClass;
+
+        let dir = target_dir("dataset-job-demo");
+        let _ = std::fs::remove_dir_all(&dir);
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 2,
+            seed: 42,
+            landscape: "plain".into(),
+            max_slope_deg: 25.0,
+            elements: vec![
+                ElementSpec {
+                    kind: ElementKind::Building,
+                    preset_id: "rectangular".into(),
+                    count: 2,
+                },
+                ElementSpec {
+                    kind: ElementKind::Tree,
+                    preset_id: "deciduous-tree".into(),
+                    count: 5,
+                },
+                ElementSpec {
+                    kind: ElementKind::Grass,
+                    preset_id: "tall-grass".into(),
+                    count: 20,
+                },
+            ],
+        };
+
+        let report = run_batch(&catalog, &recipe, &options(dir.clone(), "demo"), &mut |_| {});
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.scenes.len(), 2);
+        for index in [0u32, 1] {
+            assert!(dir.join(format!("scene-{index:04}.xyz")).is_file());
+            assert!(dir.join(format!("scene-{index:04}.stats.json")).is_file());
+        }
+        assert!(dir.join("run.json").is_file());
+
+        for scene in &report.scenes {
+            for class in [PointClass::Ground, PointClass::Building, PointClass::Vegetation] {
+                assert!(
+                    scene.by_class.get(&class.code()).copied().unwrap_or(0) > 0,
+                    "сцена {}: нет точек класса {}",
+                    scene.index,
+                    class.label()
+                );
+            }
+            assert!(scene.objects["building"].placed > 0);
+            assert!(scene.objects["tree"].placed > 0);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn full_run_writes_parseable_xyz_with_all_four_classes() {
         use generation_core::PointClass;
 
