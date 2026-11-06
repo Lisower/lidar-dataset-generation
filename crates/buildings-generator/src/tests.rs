@@ -202,7 +202,10 @@ fn roof_geometry_valid() {
             for &(len, wid) in &[(12.0, 8.0), (8.0, 8.0), (5.0, 4.0)] {
                 let cfg = config(3);
                 let wy = wid * 0.5 + 0.4;
-                let ridge = if matches!(style, RoofStyle::Gable | RoofStyle::HalfHip) {
+                let ridge = if matches!(
+                    style,
+                    RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::HalfHipGable
+                ) {
                     cfg.max_ridge_shift * wy
                 } else {
                     0.0
@@ -239,7 +242,13 @@ fn half_hip_has_sloping_ends_and_planar_sides() {
             let wy = width * 0.5 + 0.4;
             for ridge in [-0.35 * wy, 0.0, 0.35 * wy] {
                 let faces = roof_faces(
-                    RoofStyle::HalfHip, length, width, 0.4, pitch, &config(3), ridge,
+                    RoofStyle::HalfHip,
+                    length,
+                    width,
+                    0.4,
+                    pitch,
+                    &config(3),
+                    ridge,
                 );
                 // Hips occupy a substantial part of the roof height and depth.
                 let lx = length * 0.5 + 0.4;
@@ -269,10 +278,41 @@ fn half_hip_has_sloping_ends_and_planar_sides() {
 }
 
 #[test]
+fn gable_half_hip_has_large_gables_and_small_upper_hips() {
+    use crate::generation::roof::roof_faces;
+    for (length, width) in [(12.0, 8.0), (8.0, 12.0), (5.0, 5.0)] {
+        for pitch in [5.0_f32, 27.0, 40.0] {
+            let wy = width * 0.5 + 0.4;
+            for ridge in [-0.35 * wy, 0.0, 0.35 * wy] {
+                let faces = roof_faces(
+                    RoofStyle::HalfHipGable,
+                    length,
+                    width,
+                    0.4,
+                    pitch,
+                    &config(3),
+                    ridge,
+                );
+                let rise = pitch.to_radians().tan() * wy;
+                assert_eq!(faces[2].points().len(), 3);
+                assert_eq!(faces[3].points().len(), 3);
+                assert!(faces[2].points().iter().any(|p| (p.z - rise).abs() < 0.001));
+                for gable in &faces[4..6] {
+                    assert_eq!(gable.points().len(), 4);
+                    assert!(gable.points().iter().filter(|p| p.z == 0.0).count() == 2);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn compound_presets_have_empty_notches_and_no_shared_wall_points() {
     use crate::generation::BuildingPreset;
     for preset in [BuildingPreset::LShaped, BuildingPreset::WithAnnex] {
-        for seed in 0..12 {
+        let mut roofs_seen = std::collections::HashSet::new();
+        let mut corners_seen = std::collections::HashSet::new();
+        for seed in 0..80 {
             let mut cfg = config(seed);
             cfg.preset = preset;
             cfg.point_jitter = 0.0;
@@ -280,50 +320,325 @@ fn compound_presets_have_empty_notches_and_no_shared_wall_points() {
             let repeated = Building::generate(&cfg);
             assert_eq!(b.point_cloud, repeated.point_cloud);
             assert_eq!(b.config.preset, preset);
-            assert_eq!(b.roof, RoofStyle::Flat);
+            roofs_seen.insert(b.roof);
+            let roof = b.root.children.last().unwrap();
+            let wing = &roof.children[1];
+            let (min, max) = wing.faces.iter().flat_map(|f| f.points()).fold(
+                (
+                    bevy::math::Vec3::splat(f32::INFINITY),
+                    bevy::math::Vec3::splat(f32::NEG_INFINITY),
+                ),
+                |(min, max), &p| (min.min(p), max.max(p)),
+            );
+            let sx = if min.x + max.x > 0.0 { 1.0 } else { -1.0 };
+            let sy = if min.y + max.y < 0.0 { 1.0 } else { -1.0 };
+            corners_seen.insert((sx > 0.0, sy > 0.0));
             let joint = b.size.x * 0.12;
-            let ah = if preset == BuildingPreset::LShaped { b.size.z } else { b.floor_height * 0.65 };
+            let ah = if preset == BuildingPreset::LShaped {
+                b.size.z
+            } else {
+                b.floor_height * 0.65
+            };
             for point in &b.point_cloud.points {
-                let p = point.position;
+                let p = point.position * bevy::math::Vec3::new(sx, sy, 1.0);
                 assert!(p.is_finite());
                 assert!(p.z >= -0.02);
-                assert!(!(p.x > joint + 0.15 && p.y > 0.15), "filled footprint notch: {p:?}");
-                assert!(!((p.x - joint).abs() < 0.001 && p.y < -0.2 && p.y > -b.size.y*0.5+0.2 && p.z > 0.1 && p.z < ah-0.1), "internal shared wall: {p:?}");
+                assert!(
+                    !(p.x > joint + 0.15 && p.y > 0.15),
+                    "filled footprint notch: {p:?}"
+                );
+                assert!(
+                    !((p.x - joint).abs() < 0.001
+                        && p.y < -0.2
+                        && p.y > -b.size.y * 0.5 + 0.2
+                        && p.z > 0.1
+                        && p.z < ah - 0.1),
+                    "internal shared wall: {p:?}"
+                );
             }
-            let roofs = &b.root.children.last().unwrap().faces;
-            let first = roofs[0].points()[0].z;
-            let second = roofs[1].points()[0].z;
-            if preset == BuildingPreset::LShaped { assert!((first-second).abs() < 0.001); }
-            else { assert!(first > second + 0.5); }
+            for section in &roof.children {
+                for face in &section.faces {
+                    let n = face.normal();
+                    assert!(n.is_finite() && n.length() > 0.99);
+                    assert!(
+                        face.points()
+                            .iter()
+                            .all(|p| (*p - face.points()[0]).dot(n).abs() < 0.001)
+                    );
+                }
+            }
         }
+        assert_eq!(roofs_seen.len(), RoofStyle::ALL.len());
+        assert_eq!(corners_seen.len(), 4);
     }
 }
 
 #[test]
 fn tall_presets_generate_complete_repeatable_buildings() {
     use crate::generation::BuildingPreset;
-    for (preset,min_floors,max_floors) in [
-        (BuildingPreset::ApartmentBlock,6,16),
-        (BuildingPreset::Skyscraper,32,60),
+    for (preset, min_floors, max_floors) in [
+        (BuildingPreset::ApartmentBlock, 6, 16),
+        (BuildingPreset::MultiEntranceApartment, 6, 16),
+        (BuildingPreset::Skyscraper, 32, 60),
     ] {
         let mut cfg = config(42);
         cfg.preset = preset;
         let b = Building::generate(&cfg);
         let repeated = Building::generate(&cfg);
-        assert_eq!(b.point_cloud,repeated.point_cloud);
-        assert_eq!(b.config.preset,preset);
+        assert_eq!(b.point_cloud, repeated.point_cloud);
+        assert_eq!(b.config.preset, preset);
         assert!((min_floors..=max_floors).contains(&b.floors));
-        assert_eq!(b.root.children.len(),b.floors as usize+1);
-        assert_eq!(b.roof,RoofStyle::Flat);
+        assert_eq!(b.root.children.len(), b.floors as usize + 1);
+        assert_eq!(b.roof, RoofStyle::Flat);
         assert!(b.parapet && !b.dormer);
-        assert!((b.size.z-b.floor_height*b.floors as f32).abs()<0.001);
-        let max_z=b.point_cloud.points.iter().map(|p|p.position.z).fold(f32::NEG_INFINITY,f32::max);
-        assert!(max_z>b.size.z);
-        assert!(max_z<=b.total_height()+0.02);
-        assert!(b.point_cloud.points.iter().all(|p|p.position.is_finite() && p.position.z>=-0.02));
-        if preset==BuildingPreset::Skyscraper {
-            assert!(b.size.z>b.size.x.max(b.size.y)*3.0);
-            assert_eq!(b.config.balcony_probability,0.0);
+        assert!((b.size.z - b.floor_height * b.floors as f32).abs() < 0.001);
+        let max_z = b
+            .point_cloud
+            .points
+            .iter()
+            .map(|p| p.position.z)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(max_z > b.size.z);
+        assert!(max_z <= b.total_height() + 0.02);
+        assert!(
+            b.point_cloud
+                .points
+                .iter()
+                .all(|p| p.position.is_finite() && p.position.z >= -0.02)
+        );
+        if preset == BuildingPreset::Skyscraper {
+            assert!(b.size.z > b.size.x.max(b.size.y) * 3.0);
+            assert_eq!(b.config.balcony_probability, 0.0);
         }
+    }
+}
+
+#[test]
+fn tall_buildings_repeat_upper_floor_layouts() {
+    use crate::generation::BuildingPreset;
+    for preset in [
+        BuildingPreset::ApartmentBlock,
+        BuildingPreset::MultiEntranceApartment,
+        BuildingPreset::Skyscraper,
+    ] {
+        let mut balconies_seen = false;
+        for seed in 0..12 {
+            let mut cfg = config(seed);
+            cfg.preset = preset;
+            let b = Building::generate(&cfg);
+            let first = &b.root.children[1];
+            balconies_seen |= first
+                .children
+                .iter()
+                .any(|wall| wall.children.iter().any(|p| p.name == "балкон"));
+            let cloud = first.collect_cloud();
+            for floor in &b.root.children[2..b.floors as usize] {
+                assert_eq!(
+                    floor.collect_cloud(),
+                    cloud,
+                    "{preset:?}, seed={seed}: floor layouts differ"
+                );
+            }
+        }
+        if preset != BuildingPreset::Skyscraper {
+            assert!(balconies_seen);
+        }
+    }
+}
+
+#[test]
+fn multiple_entrances_have_separate_ground_floor_openings() {
+    use crate::generation::BuildingPreset;
+    let mut counts = std::collections::HashSet::new();
+    for seed in 0..20 {
+        let mut cfg = config(seed);
+        cfg.preset = BuildingPreset::MultiEntranceApartment;
+        cfg.point_jitter = 0.0;
+        let b = Building::generate(&cfg);
+        counts.insert(b.entrance_count);
+        let ground = &b.root.children[0];
+        let entrances: Vec<_> = ground
+            .children
+            .iter()
+            .filter(|wall| wall.children.iter().any(|p| p.name == "дверь"))
+            .collect();
+        assert_eq!(
+            entrances.len(),
+            1,
+            "all entrances should face the same long facade"
+        );
+        let wall = entrances[0];
+        let doors: Vec<_> = wall.children.iter().filter(|p| p.name == "дверь").collect();
+        assert_eq!(doors.len(), b.entrance_count as usize);
+        assert!((2..=4).contains(&b.entrance_count));
+        assert!(wall.transform.translation.y.abs() > b.size.y * 0.4);
+        for (i, door) in doors.iter().enumerate() {
+            let x = door.transform.translation.x;
+            assert!(x.abs() + b.config.door_width < b.size.x * 0.5);
+            if i > 0 {
+                assert!(x - doors[i - 1].transform.translation.x > b.config.door_width + 1.0);
+            }
+            for point in &wall.cloud.points {
+                let p = point.position;
+                assert!(
+                    !((p.x - x).abs() < b.config.door_width * 0.5
+                        && p.z < -b.floor_height * 0.5 + b.config.door_height),
+                    "wall points cover an entrance: {p:?}"
+                );
+            }
+            for window in wall.children.iter().filter(|p| p.name == "окно") {
+                assert!(
+                    (window.transform.translation.x - x).abs()
+                        > (b.config.window_width + b.config.door_width) * 0.5
+                );
+            }
+        }
+    }
+    assert_eq!(counts, [2, 3, 4].into_iter().collect());
+    let preset: BuildingConfig = ron::from_str(include_str!(
+        "../../../presets/buildings/multi-storey/multi-entrance/config.ron"
+    ))
+    .unwrap();
+    assert_eq!(preset.preset, BuildingPreset::MultiEntranceApartment);
+    assert_eq!(preset.enclosed_balcony_probability, 0.35);
+}
+
+#[test]
+fn enclosed_balcony_probability_can_force_either_style() {
+    for probability in [0.0, 1.0] {
+        let mut cfg = config(9);
+        cfg.min_floors = 3;
+        cfg.max_floors = 3;
+        cfg.balcony_probability = 1.0;
+        cfg.enclosed_balcony_probability = probability;
+        let b = Building::generate(&cfg);
+        let balconies: Vec<_> = b
+            .root
+            .children
+            .iter()
+            .filter(|p| p.name == "этаж")
+            .flat_map(|p| &p.children)
+            .flat_map(|p| &p.children)
+            .filter(|p| p.name == "балкон")
+            .collect();
+        assert_eq!(balconies.len(), 2);
+        for balcony in balconies {
+            assert_eq!(
+                balcony
+                    .children
+                    .iter()
+                    .any(|p| p.name == "балкон-остекление"),
+                probability == 1.0
+            );
+            assert_eq!(
+                balcony
+                    .children
+                    .iter()
+                    .any(|p| p.name == "балкон-перекрытие"),
+                probability == 1.0
+            );
+        }
+    }
+}
+
+#[test]
+fn outbuildings_use_their_roof_sets_and_clear_wide_gate_openings() {
+    use crate::generation::BuildingPreset;
+    for (preset, styles) in [
+        (
+            BuildingPreset::Hangar,
+            vec![RoofStyle::Gable, RoofStyle::Barrel],
+        ),
+        (
+            BuildingPreset::Garage,
+            vec![RoofStyle::Flat, RoofStyle::Gable, RoofStyle::Shed],
+        ),
+        (BuildingPreset::Barn, vec![RoofStyle::Gable]),
+    ] {
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..40 {
+            let mut cfg = config(seed);
+            cfg.preset = preset;
+            cfg.point_jitter = 0.0;
+            let b = Building::generate(&cfg);
+            assert_eq!(b.config.preset, preset);
+            assert_eq!(b.floors, 1);
+            assert!(!b.dormer && !b.parapet);
+            assert!(styles.contains(&b.roof));
+            seen.insert(b.roof);
+            assert!(b.config.door_width + 0.2 < b.size.x.min(b.size.y));
+            assert!(b.config.door_height + 0.14 < b.size.z);
+            let floor = &b.root.children[0];
+            assert!(
+                floor
+                    .children
+                    .iter()
+                    .all(|w| w.children.iter().all(|p| p.name != "балкон"))
+            );
+            let gates: Vec<_> = floor
+                .children
+                .iter()
+                .flat_map(|w| {
+                    w.children
+                        .iter()
+                        .filter(|p| p.name == "ворота")
+                        .map(move |gate| (w, gate))
+                })
+                .collect();
+            assert_eq!(gates.len(), 1);
+            let (wall, gate) = gates[0];
+            assert!(!wall.children.iter().any(|p| p.name == "окно"));
+            let along_x = wall.transform.translation.y.abs() > 0.1;
+            let facade_length = if along_x { b.size.x } else { b.size.y };
+            assert!((facade_length - b.size.x.min(b.size.y)).abs() < 0.001);
+            for point in &wall.cloud.points {
+                let p = point.position;
+                let along = if along_x { p.x } else { p.y };
+                assert!(
+                    !(along.abs() < b.config.door_width * 0.5
+                        && p.z < -b.floor_height * 0.5 + b.config.door_height),
+                    "{preset:?}: wall points cover the gate"
+                );
+            }
+            assert_eq!(
+                gate.children
+                    .iter()
+                    .filter(|p| p.name == "ворота-раскос")
+                    .count(),
+                if preset == BuildingPreset::Barn { 4 } else { 0 }
+            );
+            assert!(
+                b.point_cloud
+                    .points
+                    .iter()
+                    .all(|p| p.position.is_finite() && p.position.z >= -1e-4)
+            );
+            if seed == 0 {
+                assert_eq!(b.point_cloud, Building::generate(&cfg).point_cloud);
+            }
+        }
+        assert_eq!(seen, styles.into_iter().collect());
+    }
+}
+
+#[test]
+fn outbuilding_presets_deserialize() {
+    use crate::generation::BuildingPreset;
+    for (text, preset) in [
+        (
+            include_str!("../../../presets/buildings/outbuildings/hangar/config.ron"),
+            BuildingPreset::Hangar,
+        ),
+        (
+            include_str!("../../../presets/buildings/outbuildings/garage/config.ron"),
+            BuildingPreset::Garage,
+        ),
+        (
+            include_str!("../../../presets/buildings/outbuildings/barn/config.ron"),
+            BuildingPreset::Barn,
+        ),
+    ] {
+        let cfg: BuildingConfig = ron::from_str(text).unwrap();
+        assert_eq!(cfg.preset, preset);
     }
 }

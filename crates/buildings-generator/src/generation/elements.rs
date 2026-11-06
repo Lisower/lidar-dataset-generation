@@ -6,10 +6,10 @@
 //! чтобы её низ совпадал с низом этажа (см. `wall_part`).
 
 use bevy::color::Color;
-use bevy::math::{Vec3, Quat};
-use rand::RngExt;
+use bevy::math::{Quat, Vec3};
 use bevy::transform::components::Transform;
 use generation_core::point_clouds::primitives::{GridNoise, apply_noise, polygon_points};
+use rand::RngExt;
 
 use super::config::BuildingConfig;
 use super::palette::{BALCONY_RAILING, BALCONY_SLAB, FRAME};
@@ -153,9 +153,9 @@ fn inside_cutout(ctx: &WallCtx, p: Vec3, cutouts: &[FaceCutout]) -> bool {
     } else {
         p.y
     };
-    cutouts.iter().any(|c| {
-        along >= c.along_min && along <= c.along_max && p.z >= c.z_min && p.z <= c.z_max
-    })
+    cutouts
+        .iter()
+        .any(|c| along >= c.along_min && along <= c.along_max && p.z >= c.z_min && p.z <= c.z_max)
 }
 
 /// Окно как группа: рама + стекло.
@@ -180,29 +180,25 @@ pub fn window_part(
 
     let base = ctx.local_point(offset, z_from_center);
     // База группы — внешняя грань стены на высоте центра окна.
-    Part::group(
-        "окно",
-        window_color,
-        Transform::from_translation(base),
-    )
-    .with_child(Part::boxed_step(
-        "рама",
-        sized(along_x, width + 0.12, 0.08, wh + 0.16),
-        ctx.facade.outward(),
-        FRAME,
-        Transform::IDENTITY,
-        config,
-        fstep,
-    ))
-    .with_child(Part::boxed_step(
-        "стекло",
-        sized(along_x, width - 0.1, 0.04, wh - 0.12),
-        ctx.facade.outward(),
-        window_color,
-        Transform::from_translation(ctx.facade.outward() * 0.07),
-        config,
-        fstep,
-    ))
+    Part::group("окно", window_color, Transform::from_translation(base))
+        .with_child(Part::boxed_step(
+            "рама",
+            sized(along_x, width + 0.12, 0.08, wh + 0.16),
+            ctx.facade.outward(),
+            FRAME,
+            Transform::IDENTITY,
+            config,
+            fstep,
+        ))
+        .with_child(Part::boxed_step(
+            "стекло",
+            sized(along_x, width - 0.1, 0.04, wh - 0.12),
+            ctx.facade.outward(),
+            window_color,
+            Transform::from_translation(ctx.facade.outward() * 0.07),
+            config,
+            fstep,
+        ))
 }
 
 /// Дверь (группа: коробка + полотно) на внешней грани стены.
@@ -252,6 +248,87 @@ pub fn door_part(
     ))
 }
 
+/// Wide utility gate: sectional metal panels, or double wooden barn doors.
+pub fn gate_part(
+    ctx: &WallCtx,
+    floor_height: f32,
+    color: Color,
+    wooden: bool,
+    config: &BuildingConfig,
+) -> Part {
+    let height = config.door_height;
+    let width = config.door_width;
+    let mut gate = door_part(
+        ctx,
+        (height + 0.14) * 0.5 - floor_height * 0.5,
+        color,
+        height,
+        config,
+    );
+    gate.name = "ворота";
+    let along = ctx.facade.along();
+    let outward = ctx.facade.outward();
+    let step = facade_step(config);
+    let count = if wooden {
+        (width / 0.25).ceil() as usize
+    } else {
+        (height / 0.35).ceil() as usize
+    };
+    for i in 1..count {
+        let (size, center) = if wooden {
+            (
+                along.abs() * 0.018 + outward.abs() * 0.02 + Vec3::Z * (height - 0.12),
+                along * (-width * 0.5 + width * i as f32 / count as f32),
+            )
+        } else {
+            (
+                along.abs() * (width - 0.12) + outward.abs() * 0.02 + Vec3::Z * 0.018,
+                Vec3::Z * (-height * 0.5 + height * i as f32 / count as f32),
+            )
+        };
+        gate = gate.child(Part::boxed_step(
+            "ворота-шов",
+            size,
+            outward,
+            FRAME,
+            Transform::from_translation(center + outward * 0.12),
+            config,
+            step,
+        ));
+    }
+    if wooden {
+        for leaf in [-1.0, 1.0] {
+            for diagonal in [-1.0, 1.0] {
+                let a = along * (leaf * width * 0.25 - width * 0.21)
+                    + Vec3::Z * (diagonal * (height * 0.5 - 0.12));
+                let b = along * (leaf * width * 0.25 + width * 0.21)
+                    - Vec3::Z * (diagonal * (height * 0.5 - 0.12));
+                let delta = b - a;
+                gate = gate.child(Part::boxed_outwards_step(
+                    "ворота-раскос",
+                    Vec3::new(0.07, 0.07, delta.length()),
+                    &[Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y],
+                    Color::srgb(0.67, 0.52, 0.33),
+                    Transform::from_translation((a + b) * 0.5 + outward * 0.17)
+                        .with_rotation(Quat::from_rotation_arc(Vec3::Z, delta.normalize())),
+                    config,
+                    step,
+                ));
+            }
+        }
+        gate = gate.child(Part::boxed_step(
+            "ворота-створки",
+            along.abs() * 0.045 + outward.abs() * 0.03 + Vec3::Z * (height - 0.1),
+            outward,
+            FRAME,
+            Transform::from_translation(outward * 0.15),
+            config,
+            step,
+        ));
+    }
+    gate
+}
+
 /// Балкон: плита + ограждение (и маленькая дверь на стену).
 ///
 /// Балкон — дочерний элемент стены; все его части позиционируются
@@ -274,7 +351,8 @@ pub fn balcony_part(
     let bd = config.balcony_depth;
     // Высота плиты (от низа этажа) и центр ограждения (от центра стены).
     let slab_z = config.balcony_floor_level - floor_height * 0.5 + 0.06;
-    let railing_z = config.balcony_floor_level - floor_height * 0.5 + 0.12
+    let railing_z = config.balcony_floor_level - floor_height * 0.5
+        + 0.12
         + config.balcony_railing_height * 0.5;
 
     let slab_size = sized(along_x, bw, bd, 0.12);
@@ -288,7 +366,8 @@ pub fn balcony_part(
 
     // Дверь из комнаты на балкон — на стене, вход на уровне плиты.
     // Высота двери не выше этажа; верх — у потолка этажа.
-    let door_height = (floor_height - config.balcony_floor_level - config.roof_thickness - 0.5).clamp(1.4, config.door_height);
+    let door_height = (floor_height - config.balcony_floor_level - config.roof_thickness - 0.5)
+        .clamp(1.4, config.door_height);
     let door = door_part(
         ctx,
         config.balcony_floor_level - floor_height * 0.5 + door_height * 0.5,
@@ -306,13 +385,26 @@ pub fn balcony_part(
         Transform::IDENTITY,
     )
     .with_child(door)
-    .children(if with_canopy && canopy_has_clearance(
-        config.balcony_floor_level + door_height + 0.07,
-        floor_height - config.roof_thickness - 0.12,
-        floor_height - config.roof_thickness,
-    ) {
-        vec![canopy_part(ctx, bw + 0.3, bd + 0.2, floor_height * 0.5 - config.roof_thickness - 0.12, balcony_color, config)]
-    } else { vec![] })
+    .children(
+        if with_canopy
+            && canopy_has_clearance(
+                config.balcony_floor_level + door_height + 0.07,
+                floor_height - config.roof_thickness - 0.12,
+                floor_height - config.roof_thickness,
+            )
+        {
+            vec![canopy_part(
+                ctx,
+                bw + 0.3,
+                bd + 0.2,
+                floor_height * 0.5 - config.roof_thickness - 0.12,
+                balcony_color,
+                config,
+            )]
+        } else {
+            vec![]
+        },
+    )
     .with_child(Part::boxed_outwards_step(
         "балкон-плита",
         slab_size,
@@ -320,9 +412,7 @@ pub fn balcony_part(
         // и на полу балкона, и по его бокам.
         &[outward, Vec3::Z, along, -along],
         BALCONY_SLAB,
-        Transform::from_translation(
-            outward * (t * 0.5 + bd * 0.5) + Vec3::Z * slab_z,
-        ),
+        Transform::from_translation(outward * (t * 0.5 + bd * 0.5) + Vec3::Z * slab_z),
         config,
         fstep,
     ))
@@ -332,9 +422,7 @@ pub fn balcony_part(
         // Передняя грань и верхняя кромка ограждения.
         &[outward, Vec3::Z],
         BALCONY_RAILING,
-        Transform::from_translation(
-            outward * (t * 0.5 + bd - 0.04) + Vec3::Z * railing_z,
-        ),
+        Transform::from_translation(outward * (t * 0.5 + bd - 0.04) + Vec3::Z * railing_z),
         config,
         fstep,
     ))
@@ -345,8 +433,7 @@ pub fn balcony_part(
         &[-along, Vec3::Z],
         BALCONY_RAILING,
         Transform::from_translation(
-            outward * (t * 0.5 + bd * 0.5) - along * (bw * 0.5 - 0.04)
-                + Vec3::Z * railing_z,
+            outward * (t * 0.5 + bd * 0.5) - along * (bw * 0.5 - 0.04) + Vec3::Z * railing_z,
         ),
         config,
         fstep,
@@ -358,11 +445,108 @@ pub fn balcony_part(
         &[along, Vec3::Z],
         BALCONY_RAILING,
         Transform::from_translation(
-            outward * (t * 0.5 + bd * 0.5) + along * (bw * 0.5 - 0.04)
-                + Vec3::Z * railing_z,
+            outward * (t * 0.5 + bd * 0.5) + along * (bw * 0.5 - 0.04) + Vec3::Z * railing_z,
         ),
         config,
         fstep,
+    ))
+}
+
+/// Остеклённый балкон: непрозрачный парапет снизу, три секции окон с
+/// рамами сверху и собственная верхняя плита. Система координат как у
+/// `balcony_part`; верх закрыт и на последнем этаже.
+pub fn enclosed_balcony_part(
+    ctx: &WallCtx,
+    floor_height: f32,
+    door_color: Color,
+    balcony_color: Color,
+    glass_color: Color,
+    config: &BuildingConfig,
+) -> Part {
+    let mut balcony = balcony_part(ctx, floor_height, door_color, balcony_color, false, config);
+    let outward = ctx.facade.outward();
+    let along = ctx.facade.along();
+    let step = facade_step(config);
+    let lower =
+        config.balcony_floor_level - floor_height * 0.5 + 0.12 + config.balcony_railing_height;
+    let upper = floor_height * 0.5 - config.roof_thickness - 0.12;
+    // Custom dimensions may leave no space above the railing.
+    if upper - lower <= 0.12 || config.balcony_width <= 0.2 || config.balcony_depth <= 0.1 {
+        return balcony;
+    }
+    let depth = config.balcony_depth;
+    let width = config.balcony_width;
+    let wall = ctx.thickness * 0.5;
+    let mut glazing = Part::group("балкон-остекление", glass_color, Transform::IDENTITY);
+    for (center, axis, normal, span, panes) in [
+        (outward * (wall + depth - 0.04), along, outward, width, 2),
+        (
+            outward * (wall + depth * 0.5) - along * (width * 0.5 - 0.04),
+            outward,
+            -along,
+            depth,
+            1,
+        ),
+        (
+            outward * (wall + depth * 0.5) + along * (width * 0.5 - 0.04),
+            outward,
+            along,
+            depth,
+            1,
+        ),
+    ] {
+        let cell = span / panes as f32;
+        let bar = 0.04;
+        for pane in 0..panes {
+            let center = center + axis * (-span * 0.5 + (pane as f32 + 0.5) * cell);
+            let z = (lower + upper) * 0.5;
+            let height = upper - lower;
+            glazing = glazing.child(Part::boxed_step(
+                "балкон-стекло",
+                axis.abs() * (cell - 2.0 * bar)
+                    + normal.abs() * 0.025
+                    + Vec3::Z * (height - 2.0 * bar),
+                normal,
+                glass_color,
+                Transform::from_translation(center + Vec3::Z * z),
+                config,
+                step,
+            ));
+            for side in [-1.0, 1.0] {
+                glazing = glazing.child(Part::boxed_outwards_step(
+                    "балкон-рама-стойка",
+                    axis.abs() * bar + normal.abs() * 0.06 + Vec3::Z * height,
+                    &[normal, axis * side],
+                    FRAME,
+                    Transform::from_translation(
+                        center + axis * (side * (cell - bar) * 0.5) + Vec3::Z * z,
+                    ),
+                    config,
+                    step,
+                ));
+                glazing = glazing.child(Part::boxed_outwards_step(
+                    "балкон-рама-перекладина",
+                    axis.abs() * (cell - 2.0 * bar) + normal.abs() * 0.06 + Vec3::Z * bar,
+                    &[normal, Vec3::Z * side],
+                    FRAME,
+                    Transform::from_translation(
+                        center + Vec3::Z * (z + side * (height - bar) * 0.5),
+                    ),
+                    config,
+                    step,
+                ));
+            }
+        }
+    }
+    balcony.children.push(glazing);
+    balcony.child(Part::boxed_outwards_step(
+        "балкон-перекрытие",
+        sized(ctx.facade.along() == Vec3::X, width, depth, 0.08),
+        &[outward, along, -along, Vec3::Z, -Vec3::Z],
+        BALCONY_SLAB,
+        Transform::from_translation(outward * (wall + depth * 0.5) + Vec3::Z * (upper + 0.04)),
+        config,
+        step,
     ))
 }
 
@@ -376,34 +560,151 @@ fn facade_step(config: &BuildingConfig) -> f32 {
     }
 }
 
+#[cfg(test)]
+mod enclosed_balcony_tests {
+    use super::*;
+
+    #[test]
+    fn glazing_faces_outward_and_enclosure_stays_below_the_next_floor() {
+        let cfg = BuildingConfig {
+            point_jitter: 0.0,
+            ..Default::default()
+        };
+        for facade in Facade::ALL {
+            for height in [2.6, 3.2] {
+                let ctx = WallCtx {
+                    facade,
+                    center: Vec3::ZERO,
+                    thickness: cfg.wall_thickness,
+                };
+                let balcony = enclosed_balcony_part(
+                    &ctx,
+                    height,
+                    Color::WHITE,
+                    Color::WHITE,
+                    Color::WHITE,
+                    &cfg,
+                );
+                let glazing = balcony
+                    .children
+                    .iter()
+                    .find(|p| p.name == "балкон-остекление")
+                    .unwrap();
+                let glass: Vec<_> = glazing
+                    .children
+                    .iter()
+                    .filter(|p| p.name == "балкон-стекло")
+                    .collect();
+                assert_eq!(glass.len(), 4);
+                let normals = [
+                    facade.outward(),
+                    facade.outward(),
+                    -facade.along(),
+                    facade.along(),
+                ];
+                for (pane, normal) in glass.iter().zip(normals) {
+                    let cloud = pane.collect_cloud();
+                    assert!(!cloud.is_empty());
+                    for point in &cloud.points {
+                        let p = point.position;
+                        // Glass clouds sample only the outward surface of each pane.
+                        let extent = pane
+                            .faces
+                            .iter()
+                            .flat_map(|f| f.points())
+                            .map(|p| p.dot(normal))
+                            .fold(f32::NEG_INFINITY, f32::max);
+                        assert!((p.dot(normal) - extent).abs() < 1e-4);
+                        let world = pane.transform.transform_point(p);
+                        assert!(world.dot(facade.outward()) >= cfg.wall_thickness * 0.5 - 1e-4);
+                    }
+                }
+                let cap = balcony
+                    .children
+                    .iter()
+                    .find(|p| p.name == "балкон-перекрытие")
+                    .unwrap();
+                let bottom = cap
+                    .faces
+                    .iter()
+                    .flat_map(|f| f.points())
+                    .map(|p| cap.transform.transform_point(*p).z)
+                    .fold(f32::INFINITY, f32::min);
+                let top = cap
+                    .faces
+                    .iter()
+                    .flat_map(|f| f.points())
+                    .map(|p| cap.transform.transform_point(*p).z)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(top < height * 0.5);
+                assert!(bottom > cfg.balcony_floor_level - height * 0.5 + 1.4);
+                assert!(!balcony.children.iter().any(|p| p.name == "entrance-canopy"));
+            }
+        }
+    }
+}
+
 /// A thin independent canopy, extending from the facade over an entrance.
-pub fn canopy_part(ctx: &WallCtx, width: f32, depth: f32, z: f32, color: Color, config: &BuildingConfig) -> Part {
+pub fn canopy_part(
+    ctx: &WallCtx,
+    width: f32,
+    depth: f32,
+    z: f32,
+    color: Color,
+    config: &BuildingConfig,
+) -> Part {
     use generation_core::geometry::Polygon;
     let outward = ctx.facade.outward();
     let along = ctx.facade.along();
-    let p = |x:f32,y:f32,lower:f32| along*x + outward*y + Vec3::Z*(0.04-0.08*y/depth-lower);
-    let w = width*0.5;
+    let p = |x: f32, y: f32, lower: f32| {
+        along * x + outward * y + Vec3::Z * (0.04 - 0.08 * y / depth - lower)
+    };
+    let w = width * 0.5;
     let t = 0.025;
-    let (a,b,c,d) = (p(-w,0.0,0.0),p(w,0.0,0.0),p(w,depth,0.0),p(-w,depth,0.0));
-    let (aa,bb,cc,dd) = (p(-w,0.0,t),p(w,0.0,t),p(w,depth,t),p(-w,depth,t));
+    let (a, b, c, d) = (
+        p(-w, 0.0, 0.0),
+        p(w, 0.0, 0.0),
+        p(w, depth, 0.0),
+        p(-w, depth, 0.0),
+    );
+    let (aa, bb, cc, dd) = (p(-w, 0.0, t), p(w, 0.0, t), p(w, depth, t), p(-w, depth, t));
     let faces = vec![
-        Polygon::quad(a,b,c,d).oriented(Vec3::Z),
-        Polygon::quad(aa,dd,cc,bb).oriented(-Vec3::Z),
-        Polygon::quad(b,bb,cc,c).oriented(along),
-        Polygon::quad(a,d,dd,aa).oriented(-along),
-        Polygon::quad(d,c,cc,dd).oriented(outward),
-        Polygon::quad(a,aa,bb,b).oriented(-outward),
+        Polygon::quad(a, b, c, d).oriented(Vec3::Z),
+        Polygon::quad(aa, dd, cc, bb).oriented(-Vec3::Z),
+        Polygon::quad(b, bb, cc, c).oriented(along),
+        Polygon::quad(a, d, dd, aa).oriented(-along),
+        Polygon::quad(d, c, cc, dd).oriented(outward),
+        Polygon::quad(a, aa, bb, b).oriented(-outward),
     ];
-    let mut canopy = Part::group("entrance-canopy",color,
-        Transform::from_translation(ctx.outer_point()+Vec3::Z*z));
-    canopy = canopy.child(Part::from_faces("canopy-sheet",faces,color,Transform::IDENTITY,false,config));
-    for side in [-1.0,1.0] {
-        let start = along*(side*width*0.4)-Vec3::Z*0.20;
-        let end = along*(side*width*0.4)+outward*(depth*0.65)-Vec3::Z*0.025;
-        let delta = end-start;
-        canopy = canopy.child(Part::boxed_outwards("canopy-bracket",
-            Vec3::new(0.025,0.025,delta.length()),&[Vec3::X,-Vec3::X,Vec3::Y,-Vec3::Y,Vec3::Z],FRAME,
-            Transform { translation:(start+end)*0.5,rotation:Quat::from_rotation_arc(Vec3::Z,delta.normalize()),..Default::default() },config));
+    let mut canopy = Part::group(
+        "entrance-canopy",
+        color,
+        Transform::from_translation(ctx.outer_point() + Vec3::Z * z),
+    );
+    canopy = canopy.child(Part::from_faces(
+        "canopy-sheet",
+        faces,
+        color,
+        Transform::IDENTITY,
+        false,
+        config,
+    ));
+    for side in [-1.0, 1.0] {
+        let start = along * (side * width * 0.4) - Vec3::Z * 0.20;
+        let end = along * (side * width * 0.4) + outward * (depth * 0.65) - Vec3::Z * 0.025;
+        let delta = end - start;
+        canopy = canopy.child(Part::boxed_outwards(
+            "canopy-bracket",
+            Vec3::new(0.025, 0.025, delta.length()),
+            &[Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z],
+            FRAME,
+            Transform {
+                translation: (start + end) * 0.5,
+                rotation: Quat::from_rotation_arc(Vec3::Z, delta.normalize()),
+                ..Default::default()
+            },
+            config,
+        ));
     }
     canopy
 }
@@ -415,30 +716,41 @@ mod canopy_tests {
     fn balcony_canopy_clears_door_frame_and_stays_below_roof() {
         let cfg = BuildingConfig::default();
         for facade in Facade::ALL {
-            for height in [2.6,2.9,3.2] {
-                let ctx = WallCtx { facade,center:Vec3::ZERO,thickness:cfg.wall_thickness };
-                let balcony = balcony_part(&ctx,height,Color::WHITE,Color::WHITE,true,&cfg);
+            for height in [2.6, 2.9, 3.2] {
+                let ctx = WallCtx {
+                    facade,
+                    center: Vec3::ZERO,
+                    thickness: cfg.wall_thickness,
+                };
+                let balcony = balcony_part(&ctx, height, Color::WHITE, Color::WHITE, true, &cfg);
                 let door = &balcony.children[0];
                 let mut door_top = f32::NEG_INFINITY;
                 for child in &door.children {
                     for face in &child.faces {
                         for p in face.points() {
-                            let world = door.transform.transform_point(child.transform.transform_point(*p));
+                            let world = door
+                                .transform
+                                .transform_point(child.transform.transform_point(*p));
                             door_top = door_top.max(world.z);
                         }
                     }
                 }
-                let canopy = balcony.children.iter().find(|p| p.name=="entrance-canopy").unwrap();
+                let canopy = balcony
+                    .children
+                    .iter()
+                    .find(|p| p.name == "entrance-canopy")
+                    .unwrap();
                 let mut bottom = f32::INFINITY;
                 let mut top = f32::NEG_INFINITY;
                 for face in &canopy.children[0].faces {
                     for p in face.points() {
                         let z = canopy.transform.transform_point(*p).z;
-                        bottom=bottom.min(z); top=top.max(z);
+                        bottom = bottom.min(z);
+                        top = top.max(z);
                     }
                 }
-                assert!(bottom>door_top+0.05);
-                assert!(top<height*0.5-cfg.roof_thickness-0.05);
+                assert!(bottom > door_top + 0.05);
+                assert!(top < height * 0.5 - cfg.roof_thickness - 0.05);
             }
         }
     }
@@ -460,22 +772,29 @@ mod optional_canopy_tests {
         for seed in 0..40 {
             let mut cfg = BuildingConfig::default();
             cfg.seed = Seed::new(seed);
-            let choice = canopy_selected(&cfg,"door-canopy",cfg.door_canopy_probability);
-            assert_eq!(choice,canopy_selected(&cfg,"door-canopy",cfg.door_canopy_probability));
-            yes |= choice; no |= !choice;
-            assert!(!canopy_selected(&cfg,"door-canopy",0.0));
-            assert!(canopy_selected(&cfg,"door-canopy",1.0));
+            let choice = canopy_selected(&cfg, "door-canopy", cfg.door_canopy_probability);
+            assert_eq!(
+                choice,
+                canopy_selected(&cfg, "door-canopy", cfg.door_canopy_probability)
+            );
+            yes |= choice;
+            no |= !choice;
+            assert!(!canopy_selected(&cfg, "door-canopy", 0.0));
+            assert!(canopy_selected(&cfg, "door-canopy", 1.0));
         }
         assert!(yes && no);
         let cfg = BuildingConfig::default();
-        let ctx = WallCtx { facade:Facade::North,center:Vec3::ZERO,thickness:cfg.wall_thickness };
-        let balcony = balcony_part(&ctx,3.0,Color::WHITE,Color::WHITE,false,&cfg);
-        assert!(!balcony.children.iter().any(|c| c.name=="entrance-canopy"));
+        let ctx = WallCtx {
+            facade: Facade::North,
+            center: Vec3::ZERO,
+            thickness: cfg.wall_thickness,
+        };
+        let balcony = balcony_part(&ctx, 3.0, Color::WHITE, Color::WHITE, false, &cfg);
+        assert!(!balcony.children.iter().any(|c| c.name == "entrance-canopy"));
     }
 }
 
 /// Conservative bounds for the sloping sheet, including a visible separation.
 pub fn canopy_has_clearance(door_top: f32, canopy_center: f32, ceiling: f32) -> bool {
-    canopy_center - 0.065 >= door_top + 0.05
-        && canopy_center + 0.04 <= ceiling - 0.05
+    canopy_center - 0.065 >= door_top + 0.05 && canopy_center + 0.04 <= ceiling - 0.05
 }

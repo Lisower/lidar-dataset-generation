@@ -4,14 +4,15 @@ use bevy::color::Color;
 use bevy::math::Vec2;
 use bevy::math::Vec3;
 use bevy::transform::components::Transform;
-use generation_core::occupancy::{Occupancy, OccupancyShape};
 use generation_core::PointCloud;
 use generation_core::Seed;
+use generation_core::occupancy::{Occupancy, OccupancyShape};
 use rand::RngExt;
 
 use super::config::{BuildingConfig, RoofStyle};
 use super::elements::{
-    Facade, FaceCutout, WallCtx, balcony_part, door_part, wall_part, window_part, canopy_part, canopy_selected, canopy_has_clearance,
+    Facade, FaceCutout, WallCtx, balcony_part, canopy_has_clearance, canopy_part, canopy_selected,
+    door_part, enclosed_balcony_part, gate_part, wall_part, window_part,
 };
 use super::palette::{DOORS, ROOFS, WALLS, WINDOWS, pick};
 use super::part::Part;
@@ -46,6 +47,8 @@ pub struct Building {
     pub floors: u32,
     /// Высота этажа.
     pub floor_height: f32,
+    /// Число подъездов (входов с земли).
+    pub entrance_count: u32,
 
     /// Тип крыши.
     pub roof: RoofStyle,
@@ -71,13 +74,35 @@ pub struct Building {
 impl Building {
     /// Сгенерировать здание по конфигурации (детерминированно от seed).
     pub fn generate(config: &BuildingConfig) -> Building {
-        if matches!(config.preset, super::config::BuildingPreset::LShaped | super::config::BuildingPreset::WithAnnex) {
+        if matches!(
+            config.preset,
+            super::config::BuildingPreset::LShaped | super::config::BuildingPreset::WithAnnex
+        ) {
             return super::preset::generate(config);
         }
         use super::config::BuildingPreset;
-        let tall = matches!(config.preset,BuildingPreset::ApartmentBlock|BuildingPreset::Skyscraper);
+        let tall = config.preset.is_tall();
+        let outbuilding = config.preset.is_outbuilding();
+        let multi = config.preset == BuildingPreset::MultiEntranceApartment;
+        let entrance_count = if multi {
+            config
+                .seed
+                .with_label("entrance-count")
+                .rng()
+                .random_range(2..=4)
+        } else {
+            1
+        };
         let resolved;
-        let config = if tall { resolved = super::preset::tall_config(config); &resolved } else { config };
+        let config = if tall {
+            resolved = super::preset::tall_config(config);
+            &resolved
+        } else if outbuilding {
+            resolved = super::preset::outbuilding_config(config);
+            &resolved
+        } else {
+            config
+        };
         let seed = config.seed;
         let mut rng = seed.rng();
 
@@ -86,7 +111,10 @@ impl Building {
         let ratio = rng.random_range(1.0..=config.max_ratio);
         let long = (short * ratio).min(config.max_size);
         let swap = rng.random::<bool>();
-        let (length, width) = if swap { (long, short) } else { (short, long) };
+        let (mut length, width) = if swap { (long, short) } else { (short, long) };
+        if multi {
+            length *= entrance_count as f32;
+        }
 
         // --- этажи ---
         let floors = rng.random_range(config.min_floors..=config.max_floors);
@@ -94,7 +122,12 @@ impl Building {
         let wall_height = floor_height * floors as f32;
 
         // --- крыша ---
-        let roof = if tall { RoofStyle::Flat } else { RoofStyle::ALL[rng.random_range(0..RoofStyle::ALL.len())] };
+        let roof = if tall {
+            RoofStyle::Flat
+        } else {
+            let styles = config.preset.roof_styles();
+            styles[rng.random_range(0..styles.len())]
+        };
         // Односкатным — заметно более пологий наклон (5–20°).
         let roof_pitch_deg = if roof == RoofStyle::Shed {
             rng.random_range(config.shed_pitch_min..=config.shed_pitch_max)
@@ -105,8 +138,7 @@ impl Building {
         };
         let overhang = rng.random_range(config.roof_overhang_min..=config.roof_overhang_max);
         let parapet = roof == RoofStyle::Flat && rng.random::<f32>() < config.parapet_probability;
-        let dormer =
-            roof.is_pitched() && rng.random::<f32>() < config.dormer_probability;
+        let dormer = roof.is_pitched() && rng.random::<f32>() < config.dormer_probability;
 
         // --- цвета ---
         let mut colors = BuildingColors {
@@ -118,25 +150,109 @@ impl Building {
         };
 
         if config.preset == BuildingPreset::Skyscraper {
-            colors.wall = Color::srgb(0.38,0.43,0.48);
-            colors.window = Color::srgb(0.30,0.49,0.61);
-            colors.roof = Color::srgb(0.25,0.28,0.32);
+            colors.wall = Color::srgb(0.38, 0.43, 0.48);
+            colors.window = Color::srgb(0.30, 0.49, 0.61);
+            colors.roof = Color::srgb(0.25, 0.28, 0.32);
+        }
+        match config.preset {
+            BuildingPreset::Hangar => {
+                colors.wall = Color::srgb(0.62, 0.65, 0.66);
+                colors.roof = Color::srgb(0.34, 0.39, 0.42);
+                colors.door = Color::srgb(0.27, 0.34, 0.37);
+            }
+            BuildingPreset::Garage => {
+                colors.door = Color::srgb(0.30, 0.35, 0.39);
+            }
+            BuildingPreset::Barn => {
+                colors.wall = Color::srgb(0.55, 0.20, 0.14);
+                colors.roof = Color::srgb(0.29, 0.25, 0.22);
+                colors.door = Color::srgb(0.36, 0.23, 0.13);
+            }
+            _ => {}
         }
 
         // --- построение дерева частей ---
         let mut root = Part::group("здание", colors.wall, Transform::IDENTITY);
 
         // Фасад с входной дверью — случайный.
-        let front = Facade::ALL[rng.random_range(0..Facade::ALL.len())];
+        let front = if outbuilding {
+            // Put wide gates at a short end; gable/barrel ridges then run
+            // along the long building axis, facing the entrance.
+            match (length >= width, rng.random::<bool>()) {
+                (true, true) => Facade::East,
+                (true, false) => Facade::West,
+                (false, true) => Facade::North,
+                (false, false) => Facade::South,
+            }
+        } else if multi {
+            if rng.random::<bool>() {
+                Facade::North
+            } else {
+                Facade::South
+            }
+        } else {
+            Facade::ALL[rng.random_range(0..Facade::ALL.len())]
+        };
+        let entrance_offsets: Vec<f32> = (0..entrance_count)
+            .map(|i| {
+                if multi {
+                    -length * 0.5 + (i as f32 + 0.5) * length / entrance_count as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
 
         let balcony_facades = balcony_facades(roof, front);
+        // Choose the apartment facade plan once and repeat it on every upper
+        // floor. A multi-entrance block has one independently chosen stack per section.
+        let mut layout_rng = seed.with_label("stacked-balconies").rng();
+        let stacked_balconies: Vec<(Facade, f32)> = if tall {
+            entrance_offsets
+                .iter()
+                .filter_map(|&center| {
+                    if layout_rng.random::<f32>() >= config.balcony_probability {
+                        return None;
+                    }
+                    let facade = if multi {
+                        if layout_rng.random::<bool>() {
+                            Facade::North
+                        } else {
+                            Facade::South
+                        }
+                    } else {
+                        balcony_facades[layout_rng.random_range(0..balcony_facades.len())]
+                    };
+                    let offset = if multi {
+                        center + length / entrance_count as f32 * 0.25
+                    } else {
+                        0.0
+                    };
+                    Some((facade, offset))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         for floor_idx in 0..floors {
             // На не-первом этаже с некоторой вероятностью появится балкон
             // на одном из фасадов.
-            let balcony_facade = if floor_idx > 0 && !balcony_facades.is_empty() && rng.random::<f32>() < config.balcony_probability {
-                Some(balcony_facades[rng.random_range(0..balcony_facades.len())])
+            let balconies = if tall {
+                if floor_idx > 0 {
+                    stacked_balconies.clone()
+                } else {
+                    Vec::new()
+                }
+            } else if floor_idx > 0
+                && !balcony_facades.is_empty()
+                && rng.random::<f32>() < config.balcony_probability
+            {
+                vec![(
+                    balcony_facades[rng.random_range(0..balcony_facades.len())],
+                    0.0,
+                )]
             } else {
-                None
+                Vec::new()
             };
 
             let mut floor = Part::group(
@@ -159,27 +275,54 @@ impl Building {
                     thickness: config.wall_thickness,
                 };
 
-                let balcony_here = balcony_facade == Some(facade);
+                let balcony_offsets: Vec<f32> = balconies
+                    .iter()
+                    .filter(|(f, _)| *f == facade)
+                    .map(|(_, offset)| *offset)
+                    .collect();
 
                 // Окна: случайное число (немного), случайная ширина (высота
                 // общая), ровный ряд по горизонтали одного этажа, сдвиг по
                 // вертикали от этажа к этажу. Зоны двери и балкона не
                 // пересекаются, от углов и между собой окна не вплотную.
                 let mut reserved: Vec<(f32, f32)> = Vec::new();
-                if floor_idx == 0 && facade == front {
+                if (floor_idx == 0 || tall) && facade == front {
                     let half = config.door_width * 0.5 + 0.6;
-                    reserved.push((-half, half));
+                    reserved.extend(
+                        entrance_offsets
+                            .iter()
+                            .map(|&offset| (offset - half, offset + half)),
+                    );
                 }
-                if balcony_here {
+                let reserved_balconies = if tall { &stacked_balconies } else { &balconies };
+                for &(_, offset) in reserved_balconies.iter().filter(|(f, _)| *f == facade) {
                     let half = config.balcony_width * 0.5 + 0.5;
-                    reserved.push((-half, half));
+                    reserved.push((offset - half, offset + half));
                 }
-                let windows = window_specs(
-                    seed.with_label(&format!("окна-{floor_idx}-{}", facade.label())),
+                let mut windows = window_specs(
+                    seed.with_label(&format!(
+                        "окна-{}-{}",
+                        if tall { 0 } else { floor_idx },
+                        facade.label()
+                    )),
                     length_along,
                     config,
                     &reserved,
                 );
+                if outbuilding {
+                    // Utility buildings have sparse, high-set side windows.
+                    if facade == front {
+                        windows.clear();
+                    }
+                    windows.truncate(if config.preset == BuildingPreset::Hangar {
+                        3
+                    } else {
+                        1
+                    });
+                    for window in &mut windows {
+                        window.z_from_center = floor_height * 0.22;
+                    }
+                }
 
                 // Проёмы на внешней грани стены (в локальных координатах от
                 // центра стены) — чтобы облако стены не дублировало точки
@@ -196,22 +339,25 @@ impl Building {
                     });
                 }
                 if floor_idx == 0 && facade == front {
-                    // Дверь: от пола этажа до верха двери.
-                    cutouts.push(FaceCutout {
-                        along_min: -config.door_width * 0.5 - pad,
-                        along_max: config.door_width * 0.5 + pad,
-                        z_min: -hz,
-                        z_max: -hz + config.door_height + pad,
-                    });
+                    for &offset in &entrance_offsets {
+                        // Дверь: от пола этажа до верха двери.
+                        cutouts.push(FaceCutout {
+                            along_min: offset - config.door_width * 0.5 - pad,
+                            along_max: offset + config.door_width * 0.5 + pad,
+                            z_min: -hz,
+                            z_max: -hz + config.door_height + pad,
+                        });
+                    }
                 }
-                if balcony_here {
+                for &offset in &balcony_offsets {
                     // Дверь на балкон: только её саму, чтобы стена вокруг
                     // двери сохранила облако точек.
                     let bdoor_h =
-                        (floor_height - config.balcony_floor_level - config.roof_thickness - 0.5).clamp(1.4, config.door_height);
+                        (floor_height - config.balcony_floor_level - config.roof_thickness - 0.5)
+                            .clamp(1.4, config.door_height);
                     cutouts.push(FaceCutout {
-                        along_min: -config.door_width * 0.5 - pad,
-                        along_max: config.door_width * 0.5 + pad,
+                        along_min: offset - config.door_width * 0.5 - pad,
+                        along_max: offset + config.door_width * 0.5 + pad,
                         z_min: config.balcony_floor_level - floor_height * 0.5 - pad,
                         z_max: config.balcony_floor_level - floor_height * 0.5 + bdoor_h + pad,
                     });
@@ -237,33 +383,87 @@ impl Building {
                     ));
                 }
 
-                if balcony_here {
-                    wall = wall.child(balcony_part(
-                        &ctx,
-                        floor_height,
-                        colors.door,
-                        colors.wall,
-                        canopy_selected(config,&format!("balcony-canopy-{floor_idx}"),config.balcony_canopy_probability),
+                for &offset in &balcony_offsets {
+                    let enclosed = canopy_selected(
                         config,
-                    ));
+                        &format!(
+                            "enclosed-balcony-{}-{}-{offset}",
+                            if tall { 0 } else { floor_idx },
+                            facade.label()
+                        ),
+                        config.enclosed_balcony_probability,
+                    );
+                    let mut balcony = if enclosed {
+                        enclosed_balcony_part(
+                            &ctx,
+                            floor_height,
+                            colors.door,
+                            colors.wall,
+                            colors.window,
+                            config,
+                        )
+                    } else {
+                        balcony_part(
+                            &ctx,
+                            floor_height,
+                            colors.door,
+                            colors.wall,
+                            canopy_selected(
+                                config,
+                                &format!(
+                                    "balcony-canopy-{}-{}-{offset}",
+                                    if tall { 0 } else { floor_idx },
+                                    facade.label()
+                                ),
+                                config.balcony_canopy_probability,
+                            ),
+                            config,
+                        )
+                    };
+                    balcony.transform.translation += facade.along() * offset;
+                    wall = wall.child(balcony);
                 }
 
                 if floor_idx == 0 && facade == front {
-                    // Дверь: низ коробки — на уровне пола этажа (земли).
-                    wall = wall.child(door_part(
-                        &ctx,
-                        (config.door_height + 0.14) * 0.5 - floor_height * 0.5,
-                        colors.door,
-                        config.door_height,
-                        config,
-                    ));
-                    if canopy_selected(config,"door-canopy",config.door_canopy_probability)
-                        && canopy_has_clearance(config.door_height + 0.14, config.door_height + 0.28, wall_height - config.roof_thickness) {
-                    wall = wall.child(canopy_part(
-                        &ctx, config.door_width + 0.5, 0.75,
-                        config.door_height + 0.28 - floor_height * 0.5,
-                        colors.roof, config,
-                    ));
+                    for &offset in &entrance_offsets {
+                        // Дверь: низ коробки — на уровне пола этажа (земли).
+                        let mut door = if outbuilding {
+                            gate_part(
+                                &ctx,
+                                floor_height,
+                                colors.door,
+                                config.preset == BuildingPreset::Barn,
+                                config,
+                            )
+                        } else {
+                            door_part(
+                                &ctx,
+                                (config.door_height + 0.14) * 0.5 - floor_height * 0.5,
+                                colors.door,
+                                config.door_height,
+                                config,
+                            )
+                        };
+                        door.transform.translation += facade.along() * offset;
+                        wall = wall.child(door);
+                        if canopy_selected(config, "door-canopy", config.door_canopy_probability)
+                            && canopy_has_clearance(
+                                config.door_height + 0.14,
+                                config.door_height + 0.28,
+                                wall_height - config.roof_thickness,
+                            )
+                        {
+                            let mut canopy = canopy_part(
+                                &ctx,
+                                config.door_width + 0.5,
+                                0.75,
+                                config.door_height + 0.28 - floor_height * 0.5,
+                                colors.roof,
+                                config,
+                            );
+                            canopy.transform.translation += facade.along() * offset;
+                            wall = wall.child(canopy);
+                        }
                     }
                 }
 
@@ -294,10 +494,7 @@ impl Building {
             center: Vec2::ZERO,
             rotation: 0.0,
             shape: OccupancyShape::Square {
-                half_extent: Vec2::new(
-                    length * 0.5 + overhang + 0.2,
-                    width * 0.5 + overhang + 0.2,
-                ),
+                half_extent: Vec2::new(length * 0.5 + overhang + 0.2, width * 0.5 + overhang + 0.2),
             },
         };
 
@@ -309,6 +506,7 @@ impl Building {
             size: Vec3::new(length, width, wall_height),
             floors,
             floor_height,
+            entrance_count,
             roof,
             roof_pitch_deg,
             overhang,
@@ -374,16 +572,31 @@ fn window_specs(
     config: &BuildingConfig,
     reserved: &[(f32, f32)],
 ) -> Vec<WindowSpec> {
-    if matches!(config.preset,super::config::BuildingPreset::ApartmentBlock|super::config::BuildingPreset::Skyscraper) {
-        let usable = length_along - 2.0*config.window_margin;
-        let count = ((usable + config.window_gap)/(config.window_width+config.window_gap)).floor().max(0.0) as usize;
-        let span = count as f32*(config.window_width+config.window_gap)-config.window_gap;
-        return (0..count).filter_map(|i| {
-            let center = -span*0.5+config.window_width*0.5+i as f32*(config.window_width+config.window_gap);
-            let half = config.window_width*0.5+0.15;
-            if reserved.iter().any(|(a,b)| center+half>*a && center-half<*b) { return None; }
-            Some(WindowSpec { center,width:config.window_width,z_from_center:0.0 })
-        }).collect();
+    if config.preset.is_tall() {
+        let usable = length_along - 2.0 * config.window_margin;
+        let count = ((usable + config.window_gap) / (config.window_width + config.window_gap))
+            .floor()
+            .max(0.0) as usize;
+        let span = count as f32 * (config.window_width + config.window_gap) - config.window_gap;
+        return (0..count)
+            .filter_map(|i| {
+                let center = -span * 0.5
+                    + config.window_width * 0.5
+                    + i as f32 * (config.window_width + config.window_gap);
+                let half = config.window_width * 0.5 + 0.15;
+                if reserved
+                    .iter()
+                    .any(|(a, b)| center + half > *a && center - half < *b)
+                {
+                    return None;
+                }
+                Some(WindowSpec {
+                    center,
+                    width: config.window_width,
+                    z_from_center: 0.0,
+                })
+            })
+            .collect();
     }
     let mut rng = seed.rng();
     const MIN_W: f32 = 0.6;
@@ -473,9 +686,13 @@ fn window_specs(
 pub fn balcony_facades(roof: RoofStyle, entrance: Facade) -> Vec<Facade> {
     match roof {
         RoofStyle::Hip | RoofStyle::HalfHip | RoofStyle::Flat => Facade::ALL.to_vec(),
-        RoofStyle::Gable | RoofStyle::Barrel => Facade::ALL.into_iter()
-            .filter(|f| f.outward().dot(entrance.outward()).abs() > 0.9).collect(),
-        RoofStyle::Shed => Facade::ALL.into_iter()
-            .filter(|f| f.outward().dot(entrance.outward()) > -0.9).collect(),
+        RoofStyle::Gable | RoofStyle::HalfHipGable | RoofStyle::Barrel => Facade::ALL
+            .into_iter()
+            .filter(|f| f.outward().dot(entrance.outward()).abs() > 0.9)
+            .collect(),
+        RoofStyle::Shed => Facade::ALL
+            .into_iter()
+            .filter(|f| f.outward().dot(entrance.outward()) > -0.9)
+            .collect(),
     }
 }

@@ -1,0 +1,6 @@
+(
+    id: "outbuildings",
+    name: "Хозпостройки",
+    description: "Ангары, гаражи и амбары",
+    is_group: true,
+)

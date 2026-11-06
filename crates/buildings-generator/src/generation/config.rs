@@ -12,17 +12,56 @@ pub enum BuildingPreset {
     LShaped,
     WithAnnex,
     ApartmentBlock,
+    MultiEntranceApartment,
     Skyscraper,
+    Hangar,
+    Garage,
+    Barn,
 }
 impl BuildingPreset {
-    pub const ALL: [Self; 5] = [Self::Rectangular, Self::LShaped, Self::WithAnnex, Self::ApartmentBlock, Self::Skyscraper];
+    pub const ALL: [Self; 9] = [
+        Self::Rectangular,
+        Self::LShaped,
+        Self::WithAnnex,
+        Self::ApartmentBlock,
+        Self::MultiEntranceApartment,
+        Self::Skyscraper,
+        Self::Hangar,
+        Self::Garage,
+        Self::Barn,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Self::Rectangular => "Прямоугольный",
             Self::LShaped => "Г-образный",
             Self::WithAnnex => "Дом с пристройкой",
             Self::ApartmentBlock => "Многоквартирный дом",
+            Self::MultiEntranceApartment => "Многоподъездный дом",
             Self::Skyscraper => "Небоскрёб",
+            Self::Hangar => "Ангар",
+            Self::Garage => "Гараж",
+            Self::Barn => "Амбар",
+        }
+    }
+
+    pub fn is_tall(self) -> bool {
+        matches!(
+            self,
+            Self::ApartmentBlock | Self::MultiEntranceApartment | Self::Skyscraper
+        )
+    }
+
+    pub fn is_outbuilding(self) -> bool {
+        matches!(self, Self::Hangar | Self::Garage | Self::Barn)
+    }
+
+    pub fn roof_styles(self) -> &'static [RoofStyle] {
+        match self {
+            Self::Hangar => &[RoofStyle::Gable, RoofStyle::Barrel],
+            Self::Garage => &[RoofStyle::Flat, RoofStyle::Gable, RoofStyle::Shed],
+            Self::Barn => &[RoofStyle::Gable],
+            _ if self.is_tall() => &[RoofStyle::Flat],
+            _ => &RoofStyle::ALL,
         }
     }
 }
@@ -38,20 +77,25 @@ pub enum RoofStyle {
     Gable,
     /// Вальмовая (шатровая).
     Hip,
-    /// Полувальмовая (голландская): вальма, усечённая небольшим фронтоном.
+    /// Полувальмовая четырёхскатная (голландская): нижние вальмы и
+    /// небольшие фронтоны над ними.
     HalfHip,
+    /// Полувальмовая двускатная: два основных ската, фронтоны и малые
+    /// вальмы, срезающие концы конька.
+    HalfHipGable,
     /// Сводчатая (бочарная): арка по всей длине.
     Barrel,
 }
 
 impl RoofStyle {
     /// Все типы крыш (для случайного выбора).
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Flat,
         Self::Shed,
         Self::Gable,
         Self::Hip,
         Self::HalfHip,
+        Self::HalfHipGable,
         Self::Barrel,
     ];
 
@@ -62,7 +106,8 @@ impl RoofStyle {
             Self::Shed => "односкатная",
             Self::Gable => "двускатная",
             Self::Hip => "вальмовая",
-            Self::HalfHip => "полувальмовая",
+            Self::HalfHip => "полувальмовая (четырёхскатная)",
+            Self::HalfHipGable => "полувальмовая (двускатная)",
             Self::Barrel => "сводчатая",
         }
     }
@@ -137,6 +182,9 @@ pub struct BuildingConfig {
     // --- балконы ---
     /// Вероятность того, что на не-первом этаже появится балкон.
     pub balcony_probability: f32,
+    /// Доля остеклённых балконов среди появившихся (0 — все открытые, 1 — все закрытые).
+    #[serde(default = "default_enclosed_balcony_probability")]
+    pub enclosed_balcony_probability: f32,
     #[serde(default = "default_door_canopy_probability")]
     pub door_canopy_probability: f32,
     #[serde(default = "default_balcony_canopy_probability")]
@@ -198,6 +246,7 @@ impl Default for BuildingConfig {
             door_width: 0.9,
             door_height: 2.05,
             balcony_probability: 0.6,
+            enclosed_balcony_probability: default_enclosed_balcony_probability(),
             door_canopy_probability: default_door_canopy_probability(),
             balcony_canopy_probability: default_balcony_canopy_probability(),
             balcony_width: 1.6,
@@ -216,5 +265,13 @@ impl Default for BuildingConfig {
     }
 }
 
-fn default_door_canopy_probability() -> f32 { 0.55 }
-fn default_balcony_canopy_probability() -> f32 { 0.6 }
+fn default_door_canopy_probability() -> f32 {
+    0.55
+}
+fn default_balcony_canopy_probability() -> f32 {
+    0.6
+}
+
+fn default_enclosed_balcony_probability() -> f32 {
+    0.35
+}
