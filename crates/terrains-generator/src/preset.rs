@@ -1,286 +1,384 @@
-//! Presets for composite 100 x 100 m environments.
-use std::path::Path;
-
-use generation_core::presets::PresetStore;
+//! Data-driven composition of existing generator presets. Legacy single ids remain valid.
+use crate::sources::PresetSource;
+use generation_core::Seed;
 use landscapes_generator::LandscapePreset;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
-use generation_core::Seed;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TerrainPreset {
-    Field,
-    Forest,
-    HillSlope,
-    TerracedSlope,
-    River,
-    Pond,
-    Coast,
-    SlopingRiver,
-    Waterfall,
-    Village,
-    Town,
-    ForestCabin,
-}
-
-impl TerrainPreset {
-    pub const ALL: [Self; 12] = [
-        Self::Field,
-        Self::Forest,
-        Self::HillSlope,
-        Self::TerracedSlope,
-        Self::River,
-        Self::Pond,
-        Self::Coast,
-        Self::SlopingRiver,
-        Self::Waterfall,
-        Self::Village,
-        Self::Town,
-        Self::ForestCabin,
-    ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Field => "field",
-            Self::Forest => "forest",
-            Self::HillSlope => "hill-slope",
-            Self::TerracedSlope => "terraced-slope",
-            Self::River => "river",
-            Self::Pond => "pond",
-            Self::Coast => "coast",
-            Self::SlopingRiver => "sloping-river",
-            Self::Waterfall => "waterfall",
-            Self::Village => "village",
-            Self::Town => "town",
-            Self::ForestCabin => "forest-cabin",
-        }
-    }
-
-    /// Русское отображаемое название пресета.
-    ///
-    /// Совпадает с `name` в манифестах `presets/terrains/…`; используется,
-    /// когда каталог пресетов недоступен и сцена строится по встроенному
-    /// архетипу.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Field => "Поле",
-            Self::Forest => "Лес",
-            Self::HillSlope => "Склон холма",
-            Self::TerracedSlope => "Террасированный склон",
-            Self::River => "Речка",
-            Self::Pond => "Пруд",
-            Self::Coast => "Побережье",
-            Self::SlopingRiver => "Наклонная река",
-            Self::Waterfall => "Водопад",
-            Self::Village => "Село",
-            Self::Town => "Городок",
-            Self::ForestCabin => "Лесная избушка",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "field" | "поле" => Some(Self::Field),
-            "forest" | "лес" => Some(Self::Forest),
-            "hill-slope" | "slope" | "склон" => Some(Self::HillSlope),
-            "terraced-slope" | "terraces" | "террасы" => Some(Self::TerracedSlope),
-            "river" | "река" | "речка" => Some(Self::River),
-            "pond" | "пруд" => Some(Self::Pond),
-            "coast" | "shore" | "побережье" => Some(Self::Coast),
-            "sloping-river" | "наклонная-речка" => Some(Self::SlopingRiver),
-            "waterfall" | "водопад" => Some(Self::Waterfall),
-            "village" | "село" => Some(Self::Village),
-            "town" | "городок" => Some(Self::Town),
-            "forest-cabin" | "избушка" => Some(Self::ForestCabin),
-            _ => None,
-        }
-    }
-
-    pub const fn landscape(self) -> LandscapePreset {
-        match self {
-            Self::Field | Self::Forest | Self::Village | Self::Town | Self::ForestCabin => {
-                LandscapePreset::Plain
+macro_rules! terrain_presets {
+    ($( $variant:ident => ($id:literal, $label:literal, $landscape:ident, $category:literal) ),+ $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum TerrainPreset { $($variant,)+ Custom }
+        impl TerrainPreset {
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)+];
+            pub const fn name(self) -> &'static str { match self { $(Self::$variant => $id,)+ Self::Custom => "custom" } }
+            pub const fn label(self) -> &'static str { match self { $(Self::$variant => $label,)+ Self::Custom => "Пользовательская территория" } }
+            pub const fn landscape(self) -> LandscapePreset { match self { $(Self::$variant => LandscapePreset::$landscape,)+ Self::Custom => LandscapePreset::Plain } }
+            pub const fn category(self) -> &'static str { match self { $(Self::$variant => $category,)+ Self::Custom => "nature/dry" } }
+            pub fn from_name(name: &str) -> Option<Self> {
+                let lower = name.to_lowercase();
+                Self::ALL.iter().copied().find(|p| p.name() == lower || p.label().to_lowercase() == lower)
+                    .or_else(|| match lower.as_str() {
+                        "slope" | "склон" => Some(Self::HillSlope), "terraces" | "террасы" => Some(Self::TerracedSlope),
+                        "река" | "речка" => Some(Self::River), "shore" | "побережье" => Some(Self::Coast),
+                        "село" => Some(Self::Village), "избушка" => Some(Self::ForestCabin),
+                        "поле" => Some(Self::Field), "лес" => Some(Self::Forest), "пруд" => Some(Self::Pond), "водопад" => Some(Self::Waterfall),
+                        "наклонная-речка" => Some(Self::SlopingRiver), _ => None,
+                    })
             }
-            Self::HillSlope => LandscapePreset::Slope,
-            Self::TerracedSlope => LandscapePreset::MultiLevel,
-            Self::River => LandscapePreset::River,
-            Self::Pond => LandscapePreset::Pond,
-            Self::Coast => LandscapePreset::Shore,
-            Self::SlopingRiver => LandscapePreset::SlopingRiver,
-            Self::Waterfall => LandscapePreset::Waterfalls,
-        }
-    }
-
-    pub const fn amounts(self) -> (usize, usize, usize, usize) {
-        // (trees, bushes, grass tufts, buildings) — target counts, not guaranteed.
-        match self {
-            Self::Field => (6, 16, 260, 0),
-            Self::Forest => (35, 38, 200, 0),
-            Self::HillSlope => (10, 18, 120, 0),
-            Self::TerracedSlope => (14, 15, 100, 0),
-            Self::River => (14, 24, 190, 0),
-            Self::Pond => (12, 23, 190, 0),
-            Self::Coast => (10, 18, 160, 0),
-            Self::SlopingRiver => (12, 20, 125, 0),
-            Self::Waterfall => (11, 18, 90, 0),
-            Self::Village => (8, 14, 130, 8),
-            Self::Town => (5, 9, 70, 14),
-            Self::ForestCabin => (31, 30, 160, 1),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn presets_are_complete_and_parseable() {
-        assert_eq!(TerrainPreset::ALL.len(), 12);
-        for preset in TerrainPreset::ALL {
-            assert_eq!(TerrainPreset::from_name(preset.name()), Some(preset));
-        }
-    }
-    #[test]
-    fn data_roundtrip_and_defaults_consistent() {
-        for preset in TerrainPreset::ALL {
-            let data = TerrainPresetData::from_preset(preset);
-            // Без каталога пресетов id — канонические kind-слаги (запасной
-            // вариант; при наличии `presets/` они резолвятся из манифестов).
-            assert_eq!(data.landscape_id, preset.landscape().kind());
-            assert_eq!(data.name, preset.name());
-            assert_eq!(data.trees > 0, preset.amounts().0 > 0);
-            assert_eq!(data.bushes > 0, preset.amounts().1 > 0);
-            assert_eq!(data.buildings > 0, preset.amounts().3 > 0);
-            // Здание ссылается на kind только когда его количество > 0.
-            assert_eq!(data.building_id.is_empty(), preset.amounts().3 == 0);
-            // Круговая сериализация в RON читается обратно.
-            let text = ron::ser::to_string_pretty(&data, Default::default()).unwrap();
-            let back: TerrainPresetData = ron::from_str(&text).unwrap();
-            assert_eq!(back.name, data.name);
-            assert_eq!(back.landscape_id, data.landscape_id);
-            assert_eq!(back.tree_id, data.tree_id);
-            assert_eq!(back.max_slope_deg, data.max_slope_deg);
+terrain_presets! {
+    Field => ("field", "Поле с редкими деревьями", Plain, "nature/dry"),
+    OpenField => ("open-field", "Открытое поле", Plain, "nature/dry"),
+    Forest => ("forest", "Лиственный лес", Plain, "nature/dry"),
+    ForestSlope => ("forest-slope", "Лиственный лес на склоне", Slope, "nature/dry"),
+    ForestTerraces => ("forest-terraces", "Лиственный лес на террасах", MultiLevel, "nature/dry"),
+    ConiferForest => ("conifer-forest", "Хвойный лес", Plain, "nature/dry"),
+    ConiferSlope => ("conifer-slope", "Хвойный лес на склоне", Slope, "nature/dry"),
+    ConiferTerraces => ("conifer-terraces", "Хвойный лес на террасах", MultiLevel, "nature/dry"),
+    Woodland => ("woodland", "Редколесье", Plain, "nature/dry"),
+    WoodlandSlope => ("woodland-slope", "Редколесье на склоне", Slope, "nature/dry"),
+    WoodlandTerraces => ("woodland-terraces", "Редколесье на террасах", MultiLevel, "nature/dry"),
+    HillSlope => ("hill-slope", "Склон без деревьев", Slope, "nature/dry"),
+    TerracedSlope => ("terraced-slope", "Террасы без деревьев", MultiLevel, "nature/dry"),
+    River => ("river", "Речка с деревьями", River, "nature/water"),
+    RiverOpen => ("river-open", "Речка без деревьев", River, "nature/water"),
+    Pond => ("pond", "Пруд с деревьями", Pond, "nature/water"),
+    PondOpen => ("pond-open", "Пруд без деревьев", Pond, "nature/water"),
+    Coast => ("coast", "Берег реки или озера", Shore, "nature/water"),
+    CoastOpen => ("coast-open", "Берег без деревьев", Shore, "nature/water"),
+    Beach => ("beach", "Морской пляж", Shore, "nature/water"),
+    SlopingRiver => ("sloping-river", "Наклонная река", SlopingRiver, "nature/water"),
+    Waterfall => ("waterfall", "Водопад с деревьями", Waterfalls, "nature/water"),
+    WaterfallOpen => ("waterfall-open", "Водопад без деревьев", Waterfalls, "nature/water"),
+    Village => ("village", "Деревня", Plain, "anthropogenic"),
+    Town => ("town", "Городок", Plain, "anthropogenic"),
+    SkyscraperCity => ("skyscraper-city", "Город с небоскрёбами", Plain, "anthropogenic"),
+    ApartmentCity => ("apartment-city", "Город с многоэтажками", Plain, "anthropogenic"),
+    ResidentialCity => ("residential-city", "Город с частными домами", Plain, "anthropogenic"),
+    ForestCabin => ("forest-cabin", "Лесная избушка", Plain, "nature/dry"),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum Settlement {
+    #[default]
+    None,
+    Village,
+    Grid,
+    Cabin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlacementSettings {
+    pub settlement: Settlement,
+    pub street_width: f32,
+    pub setback: f32,
+    pub tree_clearance: f32,
+    pub plant_slope_deg: f32,
+    pub cluster_probability: f32,
+    pub cluster_radius: f32,
+    pub clearing_radius: f32,
+    pub waterfall_clearance: f32,
+}
+impl Default for PlacementSettings {
+    fn default() -> Self {
+        Self {
+            settlement: Settlement::None,
+            street_width: 6.0,
+            setback: 2.5,
+            tree_clearance: 0.6,
+            plant_slope_deg: 35.0,
+            cluster_probability: 0.78,
+            cluster_radius: 17.0,
+            clearing_radius: 0.0,
+            waterfall_clearance: 4.0,
         }
     }
 }
 
-/// Данные террейнового пресета для демо — сериализуются в
-/// `presets/terrains/<папка>/config.ron`.
-///
-/// Хранит id суб-пресетов других категорий (`presets/landscapes/...`,
-/// `presets/plants/...`, `presets/buildings/...`) и целевые счётчики;
-/// генерация подгружает конфиги суб-пресетов из файлов, а при отсутствии
-/// (`presets_root = None` или файла нет) — откатывается на архетипы.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum GrassDensity {
+    #[default]
+    Legacy,
+    None,
+    Sparse,
+    Medium,
+    Dense,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrassSettings {
+    pub density: GrassDensity,
+    pub variants_per_preset: usize,
+    pub min_scale: f32,
+    pub max_scale: f32,
+    pub min_water_distance: f32,
+}
+impl Default for GrassSettings {
+    fn default() -> Self {
+        Self {
+            density: GrassDensity::Legacy,
+            variants_per_preset: 4,
+            min_scale: 0.8,
+            max_scale: 1.2,
+            min_water_distance: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerrainPresetData {
-    /// Пометка seed для dump-инструмента; при генерации заменяется на актуальный.
     #[serde(default)]
     pub seed: Seed,
-    /// Имя пресета (`field`, `village`, …).
     pub name: String,
-    /// id суб-пресета ландшафта в `presets/landscapes/`.
+    #[serde(default)]
     pub landscape_id: String,
-    /// id суб-пресета дерева в `presets/plants/`.
+    #[serde(default)]
     pub tree_id: String,
-    /// id суб-пресета куста в `presets/plants/`.
+    #[serde(default)]
     pub bush_id: String,
-    /// id суб-пресета травы в `presets/plants/`.
+    #[serde(default)]
     pub grass_id: String,
-    /// id суб-пресета здания в `presets/buildings/` (пусто — зданий нет).
+    #[serde(default)]
     pub building_id: String,
-    /// Целевое число деревьев.
+    #[serde(default)]
+    pub landscape_sources: Vec<PresetSource>,
+    #[serde(default)]
+    pub tree_sources: Vec<PresetSource>,
+    #[serde(default)]
+    pub bush_sources: Vec<PresetSource>,
+    #[serde(default)]
+    pub grass_sources: Vec<PresetSource>,
+    #[serde(default)]
+    pub building_sources: Vec<PresetSource>,
+    #[serde(default)]
     pub trees: usize,
-    /// Целевое число кустов.
+    #[serde(default)]
     pub bushes: usize,
-    /// Целевое число пучков травы.
+    #[serde(default)]
     pub grass: usize,
-    /// Целевое число зданий.
+    #[serde(default)]
     pub buildings: usize,
-    /// Максимальный уклон под фундамент, градусы.
+    /// Exact target range, before rejection of unsuitable positions.
+    #[serde(default)]
+    pub tree_count_range: Option<(usize, usize)>,
     #[serde(default = "default_max_slope")]
     pub max_slope_deg: f32,
+    #[serde(default)]
+    pub placement: PlacementSettings,
+    #[serde(default)]
+    pub grass_settings: GrassSettings,
+    #[serde(default)]
+    pub sandy_ground: bool,
+    /// Demo landscapes are baked archetypes; false preserves a custom file verbatim.
+    #[serde(default = "default_true")]
+    pub regenerate_landscape: bool,
 }
-
 const fn default_max_slope() -> f32 {
     10.0
 }
+const fn default_true() -> bool {
+    true
+}
+
+impl TerrainPreset {
+    pub fn amounts(self) -> (usize, usize, usize, usize) {
+        let data = TerrainPresetData::from_preset(self);
+        (data.trees, data.bushes, data.grass, data.buildings)
+    }
+}
 
 impl TerrainPresetData {
-    /// Составить данные пресета из встроенного архетипа без каталога пресетов
-    /// (headless-режим и обратная совместимость): id суб-пресетов — канонические
-    /// `kind`-слаги. При генерации без пресетов они не используются для поиска
-    /// файлов (всё откатывается на архетипы).
     pub fn from_preset(preset: TerrainPreset) -> Self {
         Self::from_preset_with(preset, None)
     }
-
-    /// Составить данные пресета, разрешив id суб-пресетов по фактическому
-    /// каталогу `presets/` (если `presets_root` задан): для каждого вида
-    /// берётся пресет с нужным `kind` из манифестов (см. [`PresetStore::by_kind`]),
-    /// поэтому папки можно переименовывать и перекладывать по группам — id
-    /// подхватится из манифеста. Если каталога нет или пресета такого вида нет —
-    /// запасной вариант: канонический kind-слаг.
-    pub fn from_preset_with(preset: TerrainPreset, presets_root: Option<&Path>) -> Self {
-        let (trees, bushes, grass, buildings) = preset.amounts();
-        // Вид травы: на застроенной/полевой местности — редкая, иначе густая.
-        let grass_kind = if matches!(
-            preset,
-            TerrainPreset::Field | TerrainPreset::Village | TerrainPreset::Town
-        ) {
-            "sparse-grass"
-        } else {
-            "tall-grass"
-        };
-        // Вид здания по архетипу (пусто — зданий нет).
-        let building_kind = match preset {
-            TerrainPreset::Village => Some("rectangular"),
-            TerrainPreset::Town => Some("apartment-block"),
-            TerrainPreset::ForestCabin => Some("cabin"),
-            _ => None,
-        };
-        let landscape_kind = preset.landscape().kind();
-
-        Self {
+    pub fn from_preset_with(preset: TerrainPreset, root: Option<&Path>) -> Self {
+        use TerrainPreset::*;
+        let mut data = Self {
             seed: Seed::default(),
-            name: preset.name().to_string(),
-            landscape_id: resolve_sub_id("landscapes", landscape_kind, presets_root)
-                .unwrap_or_else(|| landscape_kind.to_string()),
-            tree_id: resolve_sub_id("plants", "deciduous-tree", presets_root)
-                .unwrap_or_else(|| "deciduous-tree".to_string()),
-            bush_id: resolve_sub_id("plants", "bush", presets_root)
-                .unwrap_or_else(|| "bush".to_string()),
-            grass_id: resolve_sub_id("plants", grass_kind, presets_root)
-                .unwrap_or_else(|| grass_kind.to_string()),
-            building_id: match building_kind {
-                Some(kind) => resolve_sub_id("buildings", kind, presets_root)
-                    .unwrap_or_else(|| kind.to_string()),
-                None => String::new(),
+            name: preset.name().into(),
+            landscape_id: preset.landscape().kind().into(),
+            tree_id: "deciduous-tree".into(),
+            bush_id: "bush".into(),
+            grass_id: "sparse-grass".into(),
+            building_id: String::new(),
+            landscape_sources: Vec::new(),
+            tree_sources: Vec::new(),
+            bush_sources: Vec::new(),
+            grass_sources: Vec::new(),
+            building_sources: Vec::new(),
+            trees: 16,
+            bushes: 12,
+            grass: 600,
+            buildings: 0,
+            tree_count_range: None,
+            max_slope_deg: 10.0,
+            placement: PlacementSettings::default(),
+            grass_settings: GrassSettings {
+                density: GrassDensity::Medium,
+                ..Default::default()
             },
-            trees,
-            bushes,
-            grass,
-            buildings,
-            max_slope_deg: default_max_slope(),
+            sandy_ground: preset == Beach,
+            regenerate_landscape: true,
+        };
+        let ids = |items: &[&str]| {
+            items
+                .iter()
+                .map(|id| PresetSource::preset(id))
+                .collect::<Vec<_>>()
+        };
+        match preset {
+            Field => {
+                data.trees = 2;
+                data.tree_count_range = Some((1, 3));
+                data.bushes = 4;
+            }
+            OpenField => {
+                data.trees = 0;
+                data.bushes = 3;
+            }
+            Forest | ForestSlope | ForestTerraces | ConiferForest | ConiferSlope
+            | ConiferTerraces | ForestCabin => {
+                data.trees = 40;
+                data.bushes = 24;
+                data.grass_settings.density = GrassDensity::Dense;
+                data.grass_sources = ids(&["sparse-grass", "tall-grass"]);
+            }
+            Woodland | WoodlandSlope | WoodlandTerraces => {
+                data.trees = 10;
+                data.placement.tree_clearance = 6.0;
+                data.placement.cluster_probability = 0.35;
+                data.tree_sources = ids(&["deciduous-tree", "pine"]);
+            }
+            HillSlope | TerracedSlope => {
+                data.trees = 0;
+                data.bushes = 5;
+            }
+            SkyscraperCity => {
+                data.trees = 2;
+                data.bushes = 4;
+                data.buildings = 4;
+                data.building_id = "skyscraper".into();
+                data.placement.settlement = Settlement::Grid;
+                data.placement.street_width = 8.0;
+                data.placement.setback = 4.0;
+                data.grass_settings.density = GrassDensity::Sparse;
+            }
+            Town | ApartmentCity => {
+                data.trees = 8;
+                data.bushes = 12;
+                data.buildings = 4;
+                data.building_id = "apartment-block".into();
+                data.placement.settlement = Settlement::Grid;
+                data.grass_settings.density = GrassDensity::Sparse;
+            }
+            ResidentialCity | Village => {
+                data.trees = if preset == Village { 16 } else { 10 };
+                data.buildings = if preset == Village { 9 } else { 14 };
+                data.building_id = "rectangular".into();
+                data.building_sources =
+                    ids(&["rectangular", "l-shaped", "annex", "cottage", "cabin"]);
+                data.placement.settlement = if preset == Village {
+                    Settlement::Village
+                } else {
+                    Settlement::Grid
+                };
+            }
+            _ => {}
         }
+        if preset == ForestCabin {
+            data.buildings = 1;
+            data.building_id = "cabin".into();
+            data.placement.settlement = Settlement::Cabin;
+            data.placement.clearing_radius = 15.0;
+        }
+        if matches!(preset, ConiferForest | ConiferSlope | ConiferTerraces) {
+            data.tree_sources = if root.is_some() {
+                vec![PresetSource::group("coniferous")]
+            } else {
+                ids(&["spruce", "fir", "pine"])
+            };
+        }
+        if matches!(
+            preset,
+            ConiferForest
+                | ConiferSlope
+                | ConiferTerraces
+                | Woodland
+                | WoodlandSlope
+                | WoodlandTerraces
+                | HillSlope
+                | TerracedSlope
+        ) {
+            data.bush_sources = ids(&["bush", "juniper"]);
+        }
+        if preset.category() == "nature/water" {
+            let mut willow = PresetSource::preset("willow");
+            willow.max_water_distance = Some(11.0);
+            let mut deciduous = PresetSource::preset("deciduous-tree");
+            deciduous.min_water_distance = 13.0;
+            data.tree_sources = vec![willow, deciduous];
+            data.grass_settings.min_water_distance = 2.0;
+            data.bush_sources = vec![PresetSource {
+                min_water_distance: 5.0,
+                ..PresetSource::preset("bush")
+            }];
+            if matches!(preset, RiverOpen | PondOpen | CoastOpen | WaterfallOpen) {
+                data.trees = 0;
+            }
+        }
+        if preset == Beach {
+            data.trees = 16;
+            data.bushes = 3;
+            data.tree_sources = ids(&["palm", "palm-coconuts"]);
+            for source in &mut data.tree_sources {
+                source.min_water_distance = 7.0;
+            }
+            data.grass_settings.density = GrassDensity::Sparse;
+            data.grass_settings.min_water_distance = 16.0;
+        }
+        data
     }
-
-    /// Подставить актуальный seed (метка «ландшафта» ставится во время
-    /// генерации самими суб-пресетами).
     pub fn with_seed(mut self, seed: Seed) -> Self {
         self.seed = seed;
         self
     }
-}
-
-/// Найти id пресета с нужным `kind` в категории `presets/<категория>/…`,
-/// используя манифесты. `None` — каталог недоступен или пресета нет.
-fn resolve_sub_id(
-    category: &str,
-    kind: &str,
-    presets_root: Option<&Path>,
-) -> Option<String> {
-    let root = presets_root?;
-    PresetStore::discover(category, root)
-        .by_kind(kind)
-        .map(|meta| meta.id.clone())
+    pub fn validate(&self) -> Result<(), String> {
+        let p = &self.placement;
+        let g = &self.grass_settings;
+        if self.name.is_empty()
+            || self.tree_count_range.is_some_and(|(min, max)| min > max)
+            || !self.max_slope_deg.is_finite()
+            || !(0.0..90.0).contains(&self.max_slope_deg)
+            || !p.plant_slope_deg.is_finite()
+            || !(0.0..90.0).contains(&p.plant_slope_deg)
+            || [
+                p.street_width,
+                p.setback,
+                p.tree_clearance,
+                p.cluster_radius,
+                p.clearing_radius,
+                p.waterfall_clearance,
+                g.min_water_distance,
+            ]
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0)
+            || p.street_width <= 0.0
+            || !p.cluster_probability.is_finite()
+            || !(0.0..=1.0).contains(&p.cluster_probability)
+            || !(1..=32).contains(&g.variants_per_preset)
+            || !g.min_scale.is_finite()
+            || !g.max_scale.is_finite()
+            || g.min_scale <= 0.0
+            || g.max_scale < g.min_scale
+        {
+            return Err(format!("Некорректные параметры территории '{}'", self.name));
+        }
+        Ok(())
+    }
 }

@@ -5,6 +5,41 @@ use bevy::math::{Vec2, Vec3};
 use generation_core::{Occupancy, Seed};
 use landscapes_generator::Landscape;
 use rand::RngExt;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Spatial buckets keep dense grass placement local rather than quadratic.
+#[derive(Default)]
+struct SpatialIndex {
+    shapes: Vec<Occupancy>,
+    buckets: BTreeMap<(i32, i32), Vec<usize>>,
+}
+impl SpatialIndex {
+    fn cells(center: Vec2, radius: f32) -> impl Iterator<Item = (i32, i32)> {
+        let lo = ((center - Vec2::splat(radius)) / 4.0).floor().as_ivec2();
+        let hi = ((center + Vec2::splat(radius)) / 4.0).floor().as_ivec2();
+        (lo.x..=hi.x).flat_map(move |x| (lo.y..=hi.y).map(move |y| (x, y)))
+    }
+    fn insert(&mut self, shape: Occupancy) {
+        let index = self.shapes.len();
+        for cell in Self::cells(shape.center, shape.shape.bounding_radius()) {
+            self.buckets.entry(cell).or_default().push(index);
+        }
+        self.shapes.push(shape);
+    }
+    fn intersects(&self, shape: &Occupancy) -> bool {
+        let mut checked = BTreeSet::new();
+        for cell in Self::cells(shape.center, shape.shape.bounding_radius()) {
+            if let Some(indices) = self.buckets.get(&cell) {
+                for &index in indices {
+                    if checked.insert(index) && self.shapes[index].intersects(shape) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlacementRules {
@@ -35,6 +70,9 @@ pub struct PlacedObject {
 pub struct PlacementMap<'a> {
     landscape: &'a Landscape,
     occupied: Vec<Occupancy>,
+    objects: SpatialIndex,
+    ground: SpatialIndex,
+    water_distance: Vec<f32>,
 }
 
 impl<'a> PlacementMap<'a> {
@@ -42,12 +80,17 @@ impl<'a> PlacementMap<'a> {
         Self {
             landscape,
             occupied: Vec::new(),
+            objects: SpatialIndex::default(),
+            ground: SpatialIndex::default(),
+            water_distance: water_distances(landscape),
         }
     }
 
     /// Reserve the footprint of an already placed object (e.g. a house).
     pub fn reserve(&mut self, footprint: Occupancy) {
         self.occupied.push(footprint);
+        self.objects.insert(footprint);
+        self.ground.insert(footprint);
     }
 
     pub fn occupied(&self) -> &[Occupancy] {
@@ -56,6 +99,44 @@ impl<'a> PlacementMap<'a> {
 
     /// Try to place an object, rejecting overlap, steep ground, water and map edges.
     pub fn try_place(&mut self, center: Vec2, rules: PlacementRules) -> Option<PlacedObject> {
+        let placed = self.check(center, rules, false)?;
+        self.reserve(placed.occupancy);
+        Some(placed)
+    }
+
+    /// Crowns exclude other woody objects, but only trunks exclude ground cover.
+    pub fn try_place_tree(
+        &mut self,
+        center: Vec2,
+        rules: PlacementRules,
+        trunk_radius: f32,
+    ) -> Option<PlacedObject> {
+        if !trunk_radius.is_finite() || trunk_radius <= 0.0 {
+            return None;
+        }
+        let placed = self.check(center, rules, false)?;
+        self.occupied.push(placed.occupancy);
+        self.objects.insert(placed.occupancy);
+        self.ground.insert(Occupancy::circle(center, trunk_radius));
+        Some(placed)
+    }
+
+    pub fn try_place_grass(&mut self, center: Vec2, rules: PlacementRules) -> Option<PlacedObject> {
+        let placed = self.check(center, rules, true)?;
+        self.ground.insert(placed.occupancy);
+        Some(placed)
+    }
+
+    /// Distance to sampled water, in metres; chamfer-grid approximation (8 neighbours).
+    pub fn distance_to_water(&self, center: Vec2) -> f32 {
+        let hf = &self.landscape.heightfield;
+        let p = ((center + Vec2::splat(hf.size_m * 0.5)) / hf.step).round();
+        let i = (p.x as usize).min(hf.n - 1);
+        let j = (p.y as usize).min(hf.n - 1);
+        self.water_distance[hf.index(i, j)]
+    }
+
+    fn check(&self, center: Vec2, rules: PlacementRules, grass: bool) -> Option<PlacedObject> {
         if !rules.radius.is_finite()
             || rules.radius <= 0.0
             || !rules.clearance.is_finite()
@@ -76,10 +157,8 @@ impl<'a> PlacementMap<'a> {
 
         let proposed = Occupancy::circle(center, rules.radius);
         // Extra clearance, including against existing rectangles; conservative circular bound.
-        if self.occupied.iter().any(|existing| {
-            existing.intersects(&proposed)
-                || existing.center.distance(center) < existing.shape.bounding_radius() + safe_radius
-        }) {
+        let index = if grass { &self.ground } else { &self.objects };
+        if index.intersects(&Occupancy::circle(center, safe_radius)) {
             return None;
         }
 
@@ -122,7 +201,6 @@ impl<'a> PlacementMap<'a> {
             }
         }
 
-        self.occupied.push(proposed);
         Some(PlacedObject {
             position: Vec3::new(center.x, center.y, hf.height_at(center.x, center.y)),
             occupancy: proposed,
@@ -151,6 +229,40 @@ impl<'a> PlacementMap<'a> {
         }
         placed
     }
+}
+
+fn water_distances(landscape: &Landscape) -> Vec<f32> {
+    let hf = &landscape.heightfield;
+    let n = hf.n;
+    let mut distances: Vec<_> = landscape
+        .water
+        .levels
+        .iter()
+        .map(|v| if v.is_some() { 0.0 } else { f32::INFINITY })
+        .collect();
+    for backwards in [false, true] {
+        for row in 0..n {
+            let y = if backwards { n - 1 - row } else { row };
+            for col in 0..n {
+                let x = if backwards { n - 1 - col } else { col };
+                let sign = if backwards { 1isize } else { -1 };
+                for (dx, dy) in [(sign, 0), (0, sign), (sign, sign), (-sign, sign)] {
+                    let (i, j) = (x as isize + dx, y as isize + dy);
+                    if i >= 0 && j >= 0 && i < n as isize && j < n as isize {
+                        let cost = if dx != 0 && dy != 0 {
+                            std::f32::consts::SQRT_2
+                        } else {
+                            1.0
+                        } * hf.step;
+                        let value = distances[hf.index(i as usize, j as usize)] + cost;
+                        let index = hf.index(x, y);
+                        distances[index] = distances[index].min(value);
+                    }
+                }
+            }
+        }
+    }
+    distances
 }
 
 #[cfg(test)]
