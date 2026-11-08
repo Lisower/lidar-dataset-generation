@@ -32,23 +32,25 @@ pub fn shortcut_script(
 
     let app_dir = app_dir.display().to_string();
     let working_dir = app_dir.replace('/', "\\");
-    let target = cargo.0.replace('/', "\\");
+    let cargo = cargo.0.replace('/', "\\");
+    // Целью ярлыка обязан быть `cmd.exe`: у ярлыка нет командной строки, поэтому
+    // `cd /d … && cargo run` требует именно её. Если целью сделать сам cargo,
+    // `/c` уедет ему в аргументы и запуск упадёт.
     let arguments = format!(
-        "/c cd /d \"{working_dir}\" && \"{target}\" run -p {}",
+        "/c cd /d \"{working_dir}\" && \"{cargo}\" run -p {}",
         app.package
     );
 
     Ok(format!(
         "$shell = New-Object -ComObject WScript.Shell\n\
          $s = $shell.CreateShortcut('{lnk}')\n\
-         $s.TargetPath = '{target}'\n\
+         $s.TargetPath = 'cmd.exe'\n\
          $s.Arguments = '{arguments}'\n\
          $s.WorkingDirectory = '{working}'\n\
          $s.IconLocation = '{icon}'\n\
          $s.Description = '{description}'\n\
          $s.Save()\n",
         lnk = quote(&lnk_path.display().to_string()),
-        target = quote(&target),
         arguments = quote(&arguments),
         working = quote(&working_dir),
         icon = quote(&icon.display().to_string()),
@@ -87,6 +89,10 @@ mod tests {
         assert!(script.contains("cd /d"));
         assert!(script.contains("plants-generator"));
         assert!(script.contains("LiDAR Plant Generator.lnk"));
+        assert!(
+            script.contains("$s.TargetPath = '") && script.contains("cmd.exe"),
+            "целью ярлыка обязан быть cmd.exe, иначе /c попадёт в cargo: {script}"
+        );
     }
 
     #[test]

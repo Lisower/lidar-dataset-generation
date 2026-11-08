@@ -152,13 +152,14 @@ fn primary_dir(env: &Env) -> Option<PathBuf> {
 }
 
 /// Каталог рабочего стола (только для флага `--desktop`).
+///
+/// На всех трёх ОС рабочий стол — это `<домашний каталог>/Desktop`; на Linux
+/// уважаем `XDG_DESKTOP_DIR`, потому что его переопределяют локализованные
+/// системы (`~/Рабочий стол`).
 fn desktop_dir(env: &Env) -> Option<PathBuf> {
     match env.platform {
         Platform::Linux => linux::desktop_dir(env.xdg_desktop.as_deref(), env.home.as_deref()),
-        Platform::Windows => windows::start_menu_dir(env.appdata.as_deref())
-            .map(|dir| dir.join("Desktop")),
-        Platform::MacOs => macos::applications_dir(env.home.as_deref())
-            .map(|dir| dir.join("Desktop")),
+        Platform::Windows | Platform::MacOs => env.home.clone().map(|home| home.join("Desktop")),
     }
 }
 
@@ -360,6 +361,70 @@ mod tests {
         let removed = super::remove_all(&env).unwrap();
         assert_eq!(removed, 1);
         assert!(bystander.is_file());
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn windows_desktop_copy_lands_on_the_desktop() {
+        let root = repo_root();
+        let data = temp_env("xtask-launch-desktop-windows");
+        let env = super::Env {
+            crate_root: &root,
+            platform: crate::manifest::Platform::Windows,
+            xdg_data_home: None,
+            home: Some(data.join("home")),
+            appdata: Some(data.join("appdata")),
+            xdg_desktop: None,
+            cargo: Some("cargo".into()),
+        };
+        let written = super::run(
+            &super::LaunchOptions {
+                apps: crate::apps::Selector::Runner,
+                desktop: true,
+                remove: false,
+            },
+            &env,
+        )
+        .unwrap();
+        assert!(
+            written
+                .iter()
+                .any(|path| path.ends_with("home/Desktop/LiDAR Dataset Runner.lnk")),
+            "{:?}",
+            written
+        );
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn macos_desktop_copy_lands_on_the_desktop() {
+        let root = repo_root();
+        let data = temp_env("xtask-launch-desktop-macos");
+        let env = super::Env {
+            crate_root: &root,
+            platform: crate::manifest::Platform::MacOs,
+            xdg_data_home: None,
+            home: Some(data.join("home")),
+            appdata: None,
+            xdg_desktop: None,
+            cargo: Some("cargo".into()),
+        };
+        let written = super::run(
+            &super::LaunchOptions {
+                apps: crate::apps::Selector::Runner,
+                desktop: true,
+                remove: false,
+            },
+            &env,
+        )
+        .unwrap();
+        assert!(
+            written
+                .iter()
+                .any(|path| path.ends_with("home/Desktop/LiDAR Dataset Runner.command")),
+            "{:?}",
+            written
+        );
         std::fs::remove_dir_all(&data).unwrap();
     }
 
