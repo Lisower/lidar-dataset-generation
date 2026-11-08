@@ -35,6 +35,8 @@ pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage 
         build_spruce_needles(skeleton, config)
     } else if config.preset == PlantPreset::Juniper {
         build_juniper_needles(skeleton, config)
+    } else if config.preset == PlantPreset::Yucca {
+        build_yucca_leaves(skeleton, config)
     } else if config.preset == PlantPreset::CactusSmall {
     let mut foliage = build_cactus_needles(skeleton, config);
     let flower = build_cactus_flower(skeleton, config);
@@ -365,6 +367,130 @@ pub(super) fn build_cactus_flower(
         foliage.faces.push(
             Polygon::triangle(center_z, p1, p2).oriented(Vec3::Z),
         );
+    }
+
+    foliage
+}
+
+/// Длинные мечевидные листья юкки.
+/// Листья образуют плотную радиальную розетку на верхушке короткого ствола.
+fn build_yucca_leaves(
+    skeleton: &PlantSkeleton,
+    config: &PlantConfig,
+) -> Foliage {
+    let mut foliage = Foliage::default();
+    let mut rng = config.seed.with_label("yucca_leaves").rng();
+
+    let Some(crown) = skeleton
+        .points
+        .iter()
+        .max_by(|a, b| {
+            a.position
+                .z
+                .partial_cmp(&b.position.z)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|point| point.position)
+    else {
+        return foliage;
+    };
+
+        let rings = [
+        // Наружный ярус — длинные листья расходятся широко в стороны.
+        (16usize, 0.82_f32, 0.20_f32),
+
+        // Средний ярус формирует основной объём розетки.
+        (13usize, 0.76_f32, 0.42_f32),
+
+        // Внутренние листья направлены заметно вверх.
+        (10usize, 0.68_f32, 0.70_f32),
+
+        // Самые молодые центральные листья — почти вертикальные.
+        (8usize, 0.56_f32, 0.95_f32),
+    ];
+
+    for (ring_index, (leaf_count, length, upward)) in
+        rings.into_iter().enumerate()
+    {
+        let angle_offset =
+            rng.random_range(0.0_f32..std::f32::consts::TAU);
+
+        for i in 0..leaf_count {
+            let angle =
+                angle_offset
+                    + i as f32 * std::f32::consts::TAU
+                        / leaf_count as f32
+                    + rng.random_range(-0.08_f32..=0.08_f32);
+
+            let radial =
+                Vec3::new(angle.cos(), angle.sin(), 0.0);
+
+            let tangent =
+                Vec3::new(-angle.sin(), angle.cos(), 0.0);
+
+            let leaf_length =
+                length * rng.random_range(0.88_f32..=1.12_f32);
+
+            let half_width = match ring_index {
+                0 => rng.random_range(0.032_f32..=0.042_f32),
+                1 => rng.random_range(0.034_f32..=0.044_f32),
+                2 => rng.random_range(0.036_f32..=0.046_f32),
+                _ => rng.random_range(0.030_f32..=0.040_f32),
+            };
+
+            // Наружные листья почти горизонтальные и слегка опускаются,
+            // внутренние заметно сильнее направлены вверх.
+            let lift = upward
+                + rng.random_range(-0.06_f32..=0.06_f32);
+
+            let dir =
+                (radial * (1.0 - lift * 0.35) + Vec3::Z * lift)
+                    .normalize_or_zero();
+
+            let base =
+                crown
+                    + radial * rng.random_range(0.030_f32..=0.060_f32)
+                    + Vec3::Z * ring_index as f32 * 0.018;
+
+            // Небольшой изгиб делает лист менее плоским:
+            // основание -> середина -> острый кончик.
+            let middle =
+                base
+                    + dir * leaf_length * 0.55
+                    + Vec3::Z * if ring_index == 0 { 0.10 } else { 0.08 };
+
+            let tip =
+                base
+                    + dir * leaf_length
+                    + Vec3::Z * if ring_index == 0 { -0.04 } else { 0.02 };
+
+            let left_base = base - tangent * half_width * 0.55;
+            let right_base = base + tangent * half_width * 0.55;
+
+            let left_mid = middle - tangent * half_width;
+            let right_mid = middle + tangent * half_width;
+
+            // Первая половина листа.
+            foliage.faces.push(Polygon::quad(
+                left_base,
+                right_base,
+                right_mid,
+                left_mid,
+            ));
+
+            // Вторая половина с острым кончиком.
+            foliage.faces.push(Polygon::triangle(
+                left_mid,
+                right_mid,
+                tip,
+            ));
+
+            foliage.cloud.push(base);
+            foliage.cloud.push(middle);
+            foliage.cloud.push(tip);
+
+            foliage.count += 1;
+        }
     }
 
     foliage

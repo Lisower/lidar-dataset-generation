@@ -100,21 +100,28 @@ impl Plant {
                     axis,
                 )
             } else if config.preset == PlantPreset::CactusLarge {
-            // Небольшое перекрытие соседних сегментов закрывает щели
-            // в местах изгиба рук кактуса.
-            let joint_overlap = (r0.min(r1) * 0.65).min(0.16);
+                // Небольшое перекрытие соседних сегментов закрывает щели
+                // в местах изгиба рук кактуса.
+                let joint_overlap = (r0.min(r1) * 0.65).min(0.16);
 
-            cactus_side_polygons(
-                r0,
-                r1,
-                height + joint_overlap * 2.0,
-                sides,
-                axis,
-            )
-        } else {
-            cone_side_polygons(r0, r1, height, sides, axis)
-        };
-
+                cactus_side_polygons(
+                    r0,
+                    r1,
+                    height + joint_overlap * 2.0,
+                    sides,
+                    axis,
+                )
+            } else if config.preset == PlantPreset::Yucca {
+                yucca_trunk_polygons(
+                    r0,
+                    r1,
+                    height,
+                    sides,
+                    axis,
+                )
+            } else {
+                cone_side_polygons(r0, r1, height, sides, axis)
+            };
             for poly in polygons {
                 faces.push(translate_polygon(&poly, midpoint));
             }
@@ -463,6 +470,106 @@ fn cactus_side_polygons(
 
             polys.push(Polygon::triangle(center, p0, p1).oriented(pref));
         }
+    }
+
+    polys
+}
+
+/// Неровный древесный ствол юкки.
+/// Несколько колец по высоте создают естественный рельеф
+/// и следы от старых оснований листьев.
+fn yucca_trunk_polygons(
+    r0: f32,
+    r1: f32,
+    height: f32,
+    sides: usize,
+    axis: Vec3,
+) -> Vec<Polygon> {
+    let (u, v) = basis(axis);
+
+    let sides = sides.max(10);
+    let rings = 9usize;
+    let angle_step = std::f32::consts::TAU / sides as f32;
+
+    let mut polys = Vec::new();
+
+    for ring in 0..rings {
+        let t0 = ring as f32 / rings as f32;
+        let t1 = (ring + 1) as f32 / rings as f32;
+
+        let z0 = -height * 0.5 + height * t0;
+        let z1 = -height * 0.5 + height * t1;
+
+        // Основной силуэт: широкий снизу и узкий сверху.
+        let base_r0 = r0 * (1.0 - t0) + r1 * t0;
+        let base_r1 = r0 * (1.0 - t1) + r1 * t1;
+
+        for i in 0..sides {
+            let next = (i + 1) % sides;
+
+            let a0 = angle_step * i as f32;
+            let a1 = angle_step * next as f32;
+
+            let c0 = u * a0.cos() + v * a0.sin();
+            let c1 = u * a1.cos() + v * a1.sin();
+
+            // Небольшая нерегулярность поверхности.
+            let relief00 =
+                1.0 + 0.045 * (a0 * 3.0 + ring as f32 * 1.7).sin();
+            let relief01 =
+                1.0 + 0.045 * (a1 * 3.0 + ring as f32 * 1.7).sin();
+
+            let relief10 =
+                1.0 + 0.045 * (a0 * 3.0 + (ring + 1) as f32 * 1.7).sin();
+            let relief11 =
+                1.0 + 0.045 * (a1 * 3.0 + (ring + 1) as f32 * 1.7).sin();
+
+            // Верхняя часть ствола немного грубее:
+            // имитация старых оснований листьев.
+            let upper_relief = if t1 > 0.55 {
+                1.015
+            } else {
+                1.0
+            };
+
+            let b0 =
+                c0 * (base_r0 * relief00) + axis * z0;
+            let b1 =
+                c1 * (base_r0 * relief01) + axis * z0;
+
+            let t0p =
+                c0 * (base_r1 * relief10 * upper_relief) + axis * z1;
+            let t1p =
+                c1 * (base_r1 * relief11 * upper_relief) + axis * z1;
+
+            let outward = (c0 + c1).normalize_or_zero();
+
+            polys.push(
+                Polygon::quad(b0, b1, t1p, t0p)
+                    .oriented(outward),
+            );
+        }
+    }
+
+    // Нижняя крышка.
+    let bottom_center = -axis * (height * 0.5);
+
+    for i in 0..sides {
+        let next = (i + 1) % sides;
+
+        let a0 = angle_step * i as f32;
+        let a1 = angle_step * next as f32;
+
+        let p0 = bottom_center
+            + (u * a0.cos() + v * a0.sin()) * r0;
+
+        let p1 = bottom_center
+            + (u * a1.cos() + v * a1.sin()) * r0;
+
+        polys.push(
+            Polygon::triangle(bottom_center, p0, p1)
+                .oriented(-axis),
+        );
     }
 
     polys

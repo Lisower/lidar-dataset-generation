@@ -70,6 +70,9 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::CactusSmall {
             return Self::build_cactus_small(config);
         }
+        if config.preset == PlantPreset::Yucca {
+            return Self::build_yucca(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -544,6 +547,42 @@ impl PlantSkeleton {
             Self::finish(&mut skeleton);
             skeleton
         }
+
+        fn build_yucca(config: &PlantConfig) -> Self {
+        let mut rng: StdRng = config.seed.with_label("yucca_skeleton").rng();
+        let mut skeleton: PlantSkeleton = Self::default();
+
+        // Основание ствола.
+        skeleton.points.push(SkeletonPoint {
+            position: Vec3::ZERO,
+            level: 0,
+            branch_id: 0,
+            radius: rng.random_range(0.23_f32..=0.29_f32),
+            taper: 1.0,
+            children_count: 1,
+        });
+
+        // Верхушка короткого древесного ствола.
+        let trunk_height = rng.random_range(0.65_f32..=0.90_f32);
+        let top_idx = skeleton.points.len();
+
+        skeleton.points.push(SkeletonPoint {
+            position: Vec3::new(0.0, 0.0, trunk_height),
+            level: 0,
+            branch_id: 0,
+            radius: skeleton.points[0].radius * 0.48,
+            taper: 0.48,
+            children_count: 0,
+        });
+
+        skeleton.segments.push(SkeletonSegment {
+            from: 0,
+            to: top_idx,
+        });
+
+        Self::finish(&mut skeleton);
+        skeleton
+    }
 
         /// Специальное построение можжевельника:
         /// низкий раскидистый куст с несколькими основными побегами
