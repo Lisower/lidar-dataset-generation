@@ -21,12 +21,16 @@ produce identical geometry and point clouds. `wiki/Архитектура.md` an
 
 ## Commands
 
-There is no CI, Makefile, `rustfmt.toml`, `clippy.toml` or custom cargo aliases.
-Only `cargo` subcommands from the README/wiki are supported:
+CI lives in `.github/workflows/build.yml` (three jobs: `test`, `bundle`,
+`verify-bundles`). There is no Makefile, `rustfmt.toml` or `clippy.toml`. The only
+cargo alias is `xtask` (`.cargo/config.toml` → `cargo xtask`, declared in
+`crates/xtask`); everything else is plain `cargo` subcommands from the
+README/wiki:
 
 ```sh
 cargo test --workspace
 cargo check --workspace
+cargo xtask launch-shortcuts --apps all [--desktop]   # or --remove
 ```
 
 `cargo test --workspace` now also compiles `lidar-dataset-runner`, so it needs
@@ -40,7 +44,9 @@ cargo test -p generation-core -p landscapes-generator -p buildings-generator \
 cargo test -p lidar-dataset-runner
 ```
 
-Running the apps (each from its own crate directory, see assets gotcha below):
+Running the apps (each from its own crate directory is still the convenient way
+for debugging; `cargo run -p …` from the repo root works too, see the assets
+gotcha below):
 
 ```sh
 cd crates/landscapes-generator && cargo run
@@ -103,13 +109,25 @@ generation-core  <- bevy-utils <- {landscapes, buildings, plants}-generator
                                          ^
                        lidar-simulator (buildings + generation-core)
                        lidar-dataset-runner (all generators + terrains-generator, Tauri app)
+                       xtask (no deps: writes launch shortcuts)
 ```
 
 - `generation-core`: `Seed`/`GlobalSeed`, `Occupancy`, `Polygon`, `PointCloud` /
   `PointClass` / XYZ export, `PresetStore` and preset RON plumbing, shared
   hotkeys (`V`, `R`, `Shift+R`) and `UiModalOpen`.
 - `bevy-utils`: cameras (`Tab`), UI window shell, mesh/material helpers, preset
-  selector window (`Ctrl+S`).
+  selector window (`Ctrl+S`), and `assets.rs` — the absolute asset directory used
+  by every app (`LIDAR_ASSETS_DIR` → `<exe>/<relative>` → `CARGO_MANIFEST_DIR`).
+  Apps use the `bevy_utils::asset_plugin!("assets")` macro in `DefaultPlugins.set`,
+  which is what lets a desktop shortcut start them from any working directory.
+- `xtask`: binary-only crate with no library. `cargo xtask launch-shortcuts`
+  writes `.desktop`/`.lnk`/`.command` files that run `cargo run -p <crate>` from
+  the crate directory, tracks them in a JSON manifest in the user data dir, and
+  removes exactly those files with `--remove`. Modules are split per platform
+  (`linux.rs`, `windows.rs`, `macos.rs`) plus `apps.rs` (registry), `paths.rs`
+  (`cargo` lookup, crate dirs), `manifest.rs` (platform data dirs, manifest) and
+  `launch.rs` (CLI). Each platform module only builds text; nothing needs the
+  target OS to be tested.
 - Generators (landscapes, buildings, plants) share one internal layout:
   - `src/generation/` — pure data, usable headless, no rendering;
   - `src/visual/` — meshes and point-cloud entities;
@@ -215,9 +233,11 @@ Generated output is gitignored: `*.xyz|*.las|*.laz|*.ply|*.pcd`,
   (`if ui.0 { return; }`). The preset window sets it while `Ctrl+S` is active.
 - Do not hard-code paths relative to the process cwd for presets: binaries derive
   the workspace root from `env!("CARGO_MANIFEST_DIR").join("../..")`.
-- Assets do not: `AssetServer` loads `fonts/Roboto-Regular.ttf` relative to the
-  current directory, and each generator has its own `assets/fonts/`. Run apps
-  from their crate directory (this is why README instructs `cd crates/<crate>`).
+- Assets no longer depend on the cwd: every app sets `AssetPlugin.file_path` to
+  an absolute path via `bevy_utils::asset_plugin!`. Each generator still has its
+  own `assets/fonts/`, and `lidar-simulator` borrows `buildings-generator/assets`
+  (tests in each crate guard that the resolved directory contains the font).
+  Running from the crate directory is still the convenient debugging default.
 - Systems routinely need `#[allow(clippy::too_many_arguments)]`; that is the norm
   for Bevy systems here and not a smell.
 - `PresetStore` is an optional `Option<Res<PresetStore>>` in generator plugins so

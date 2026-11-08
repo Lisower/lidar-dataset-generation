@@ -13,20 +13,23 @@
 
 - **Rust 1.97.1 или новее** (`rust-toolchain.toml`);
 - **Bevy 0.20** — нужен Vulkan и графическая сессия;
-- Linux: системные зависимости Bevy — см. `wiki/Запуск.md`.
+- Linux: системные зависимости Bevy — см. `wiki/Запуск.md`;
+- для сборки установщика раннера — **Node.js 20** и `@tauri-apps/cli`
+  (ставится `npm ci` в `crates/lidar-dataset-runner/ui`).
 
 ## Структура репозитория
 
 ```
-├── crates/            # 8 крейтов workspace
+├── crates/            # 9 крейтов workspace
 │   ├── generation-core        # общие данные, облака точек, пресеты
-│   ├── bevy-utils             # камеры, UI, селектор пресетов
+│   ├── bevy-utils             # камеры, UI, селектор пресетов, пути к ассетам
 │   ├── landscapes-generator   # базовый рельеф: грунт + вода
 │   ├── buildings-generator    # здания
 │   ├── plants-generator       # деревья, кусты, трава
 │   ├── terrains-generator     # целые территории 100×100 м
 │   ├── lidar-simulator        # симуляция LiDAR-сканирования
-│   └── lidar-dataset-runner   # GUI массовой генерации датасетов (Tauri + Vue)
+│   ├── lidar-dataset-runner   # GUI массовой генерации датасетов (Tauri + Vue)
+│   └── xtask                  # служебные команды: ярлыки запуска
 ├── presets/           # каталог демо-пресетов (4 категории, 41 пресет)
 ├── wiki/              # документация команды (Obsidian)
 └── local/             # локальные заметки (в Git не попадают)
@@ -168,19 +171,72 @@ cd - && cargo run -p lidar-dataset-runner
 `cargo test --workspace` теперь требует системных dev-пакетов WebKitGTK
 (`libwebkit2gtk-4.1-dev`, `libsoup-3.0-dev`).
 
-## Запуск из каталога крейта
+## Ярлыки и установка
 
-Bevy ищет ассеты (например, шрифт `fonts/Roboto-Regular.ttf`) относительно
-текущего каталога, поэтому запускайте генератор из каталога крейта, где лежит
-`assets/`:
+### Ярлыки для разработчика
+
+Одна команда создаёт ярлыки на все шесть приложений (раннер и пять
+Bevy-генераторов) в меню приложений текущей ОС:
 
 ```sh
-cd crates/landscapes-generator
-cargo run
+cargo xtask launch-shortcuts --apps all            # все шесть
+cargo xtask launch-shortcuts --apps generators     # только Bevy-генераторы
+cargo xtask launch-shortcuts --apps runner --desktop
+cargo xtask launch-shortcuts --remove              # удалить созданные
 ```
 
-Команды вида `cargo run -p …` из примеров выше дают тот же результат, если
-выполнять их из каталога соответствующего крейта (а не из корня репозитория).
+Куда попадают файлы:
+
+| ОС | Формат | Каталог |
+| --- | --- | --- |
+| Linux | `.desktop` | `$XDG_DATA_HOME/applications` (обычно `~/.local/share/applications`) |
+| Windows | `.lnk` | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\LiDAR` |
+| macOS | `.command` | `~/Applications/LiDAR` |
+
+`--desktop` дополнительно кладёт копию на рабочий стол, `--remove` удаляет
+только то, что записал сам xtask (манифест — `shortcuts.json` в каталоге данных
+пользователя).
+
+Ярлыки **требуют Rust и собирают приложение при первом запуске** — это может
+занять несколько минут, и так задумано: ярлык запускает `cargo run -p <крейт>` из
+каталога крейта. Путь к `cargo` записывается в ярлык абсолютным, потому что меню
+приложений не наследует `PATH` из `.bashrc`. Пути с символами `%`, `"`, `$`,
+апострофом и обратной косой чертой отвергаются с понятной ошибкой: такие ярлыки
+нельзя записать корректно.
+
+### Установка раннера датасетов
+
+Готовые установщики прикладываются к прогонам CI (артефакты хранятся 14 дней):
+
+| ОС | Артефакт | Установка |
+| --- | --- | --- |
+| Ubuntu / Debian | `.deb` | `sudo apt install ./lidar-dataset-runner_*.deb` |
+| Любой Linux | `.AppImage` | `chmod +x` и запуск файла |
+| Windows | `-setup.exe` (NSIS) | обычный установщик, ярлык в меню «Пуск» |
+| macOS | `.dmg` | перетащить в `Applications` |
+
+Ограничения, о которых лучше знать заранее:
+
+- установщик есть **только у раннера** — Bevy-генераторы без Rust не
+  запустятся, для них есть dev-ярлыки выше;
+- сборка macOS — **только Apple Silicon** (`macos-latest`), на Intel Mac
+  приложение не запустится;
+- `.app` не подписан: первый запуск — через контекстное меню «Открыть»
+  (Gatekeeper блокирует двойной клик);
+- AppImage сам ярлык не ставит — это делает AppImageLauncher или ничего.
+
+## Запуск из корня репозитория
+
+Ассеты (шрифт `fonts/Roboto-Regular.ttf`) ищутся по абсолютному пути: переменная
+`LIDAR_ASSETS_DIR`, затем `<каталог exe>/assets`, затем `assets/` крейта. Поэтому
+`cargo run -p <крейт>` работает из любого каталога, в том числе из ярлыка:
+
+```sh
+cargo run -p landscapes-generator
+```
+
+Запуск из каталога крейта (`cd crates/landscapes-generator && cargo run`) тоже
+работает и остаётся удобным для отладки.
 
 ## Управление генераторами
 
@@ -242,6 +298,15 @@ cargo run
 ```sh
 cargo test --workspace
 cargo check --workspace
+cargo test -p xtask
+```
+
+Установщики собираются в CI (`.github/workflows/build.yml`) на Ubuntu, Windows и
+macOS; локально тот же бандл на Linux:
+
+```sh
+cd crates/lidar-dataset-runner/ui && npm run build && cd ..
+cd crates/lidar-dataset-runner && npx tauri build --bundles deb -- --locked
 ```
 
 Разработка настроена на быстрый цикл: зависимости в dev-профиле не
