@@ -23,7 +23,7 @@ use plants_generator::PlantsPlugin;
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(bevy_utils::asset_plugin!("assets")),
             GenerationControlsPlugin::default(),
             CameraPlugin::new(Vec3::new(0.0, 3.0, 0.0), 60.0),
             PlantsPlugin::default(),

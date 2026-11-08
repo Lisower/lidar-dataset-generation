@@ -45,7 +45,7 @@ fn main() {
 
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(bevy_utils::asset_plugin!("assets")),
             GenerationControlsPlugin { initial_seed: seed },
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 145.0),
             viewer::TerrainViewerPlugin {

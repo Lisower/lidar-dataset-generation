@@ -237,11 +237,7 @@ pub fn run(options: DemoOptions) -> Result<(), &'static str> {
         .insert_resource(ClearColor(Color::srgb(0.025, 0.035, 0.05)))
         .insert_resource(Demo::new(options))
         .add_plugins((
-            DefaultPlugins.set(AssetPlugin {
-                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../buildings-generator/assets")
-                    .into(),
-                ..default()
-            }),
+            DefaultPlugins.set(bevy_utils::asset_plugin!("../buildings-generator/assets")),
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 55.0),
         ))
         .add_systems(Startup, setup)

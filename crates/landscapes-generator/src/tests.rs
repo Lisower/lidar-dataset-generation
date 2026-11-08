@@ -285,3 +285,13 @@ fn waterfall_surface_stays_connected_and_above_its_bed() {
         );
     }
 }
+
+#[test]
+fn assets_dir_points_at_crate_fonts() {
+    let dir = bevy_utils::assets::assets_dir(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        "assets",
+        None,
+    );
+    assert!(dir.join("fonts/Roboto-Regular.ttf").is_file(), "{}", dir.display());
+}
