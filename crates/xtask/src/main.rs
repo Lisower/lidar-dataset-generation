@@ -1,4 +1,5 @@
 mod apps;
+mod linux;
 mod manifest;
 mod paths;
 
