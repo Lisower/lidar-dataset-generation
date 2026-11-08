@@ -1,0 +1,156 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить системные пакеты
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crates/lidar-dataset-runner/ui/package-lock.json
+
+      - name: Установить зависимости фронтенда
+        working-directory: crates/lidar-dataset-runner/ui
+        run: npm ci
+
+      - name: Тесты
+        run: cargo test --locked --workspace
+
+  bundle:
+    name: bundle (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+            artifact: lidar-dataset-runner-linux
+          - os: windows-latest
+            bundles: nsis
+            artifact: lidar-dataset-runner-windows
+          - os: macos-latest
+            bundles: app,dmg
+            artifact: lidar-dataset-runner-macos
+    env:
+      # DMG собирается без интерактивного окна Finder.
+      TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить системные пакеты
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: ${{ matrix.bundles }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crates/lidar-dataset-runner/ui/package-lock.json
+
+      - name: Установить зависимости фронтенда
+        working-directory: crates/lidar-dataset-runner/ui
+        run: npm ci
+
+      # beforeBuildCommand сам запускает `npm run build` в ui/.
+      - name: Собрать установщики
+        working-directory: crates/lidar-dataset-runner
+        run: npx --package @tauri-apps/cli@2 tauri build --bundles ${{ matrix.bundles }} -- --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/bundle/**/*
+          retention-days: 14
+
+  verify-bundles:
+    name: verify-bundles
+    needs: bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lidar-dataset-runner-linux
+          path: target/bundle-check/artifacts
+
+      - name: Установить desktop-file-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils
+
+      - name: Распаковать .deb
+        run: |
+          set -eu
+          deb=$(find target/bundle-check/artifacts -name '*.deb' | head -n 1)
+          if [ -z "$deb" ]; then
+            echo "в артефакте нет .deb"
+            exit 1
+          fi
+          mkdir -p target/bundle-check/deb
+          dpkg-deb -x "$deb" target/bundle-check/deb
+
+      - name: Проверить ярлык и пресеты
+        run: |
+          set -eu
+          entry=$(find target/bundle-check/deb/usr/share/applications -name '*.desktop' | head -n 1)
+          if [ -z "$entry" ]; then
+            echo "в пакете нет .desktop"
+            exit 1
+          fi
+          desktop-file-validate "$entry"
+          grep -q '^Exec=' "$entry"
+
+          presets="target/bundle-check/deb/usr/lib/LiDAR Dataset Runner/presets"
+          if [ ! -d "$presets" ]; then
+            echo "в пакете нет каталога пресетов: $presets"
+            exit 1
+          fi
+          if [ -z "$(ls -A "$presets")" ]; then
+            echo "каталог пресетов в пакете пуст: $presets"
+            exit 1
+          fi
+          ls "$presets"
+
+      - name: Проверить .AppImage
+        run: |
+          set -eu
+          if ! find target/bundle-check/artifacts -name '*.AppImage' | grep -q .; then
+            echo "в артефакте нет .AppImage"
+            exit 1
+          fi
