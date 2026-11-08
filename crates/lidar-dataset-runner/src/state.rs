@@ -153,4 +153,30 @@ mod tests {
         let dir = AppState::default_output_dir(Some(Path::new("/tmp/docs")));
         assert_eq!(dir, PathBuf::from("/tmp/docs/lidar-datasets"));
     }
+
+    #[test]
+    fn resource_dir_presets_win_over_workspace() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/state-resource-dir");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("presets/landscapes")).unwrap();
+
+        let paths = AppPaths::resolve(Some(root.clone()), None);
+        assert_eq!(paths.presets_root, Some(root.join("presets")));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn resource_dir_itself_is_a_fallback() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/state-resource-plain");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("landscapes")).unwrap();
+
+        let paths = AppPaths::resolve(Some(root.clone()), None);
+        assert_eq!(paths.presets_root, Some(root.clone()));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
