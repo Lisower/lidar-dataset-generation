@@ -41,12 +41,8 @@ pub fn desktop_entry(
         app_dir.display(),
         cargo.0,
         app.package
-    );
-    let command = if command.contains('\'') {
-        return Err(format!("путь содержит \"'\": {command}"));
-    } else {
-        command
-    };
+    )
+    .replace('"', "\\\"");
 
     Ok(format!(
         "[Desktop Entry]\n\
@@ -54,7 +50,7 @@ pub fn desktop_entry(
          Version=1.0\n\
          Name={}\n\
          Comment={}\n\
-         Exec=sh -c '{command}'\n\
+         Exec=sh -c \"{command}\"\n\
          Icon={}\n\
          Terminal=false\n\
          Categories=Utility;\n\
@@ -79,12 +75,15 @@ pub fn write_entry(path: &Path, content: &str) -> Result<(), String> {
         .map_err(|error| format!("не удалось записать ярлык {}: {error}", path.display()))
 }
 
-/// Отвергнуть символы, которые нельзя писать в `.desktop`.
+/// Отвергнуть символы, которые нельзя безопасно записать в `.desktop`.
 ///
-/// `%` — field code в `Exec` и `Icon`, `"` рвёт аргумент `sh -c`.
+/// `%` — field code в `Exec` и `Icon`; `"`, `$`, `` ` `` и `\\` пришлось бы
+/// экранировать внутри кавычек `Exec`, а `desktop-file-validate` считает их
+/// зарезервированными. Отказ с понятным текстом лучше, чем файл, который
+/// установщик ярлыков молча проигнорирует.
 fn check_path(path: &Path) -> Result<(), String> {
     let text = path.display().to_string();
-    for forbidden in ['%', '"'] {
+    for forbidden in ['%', '"', '$', '`', '\\'] {
         if text.contains(forbidden) {
             return Err(format!("путь содержит \"{forbidden}\": {text}"));
         }
@@ -115,10 +114,22 @@ mod tests {
         assert!(entry.contains("[Desktop Entry]"));
         assert!(entry.contains("Name=LiDAR Landscape Generator"));
         assert!(entry.contains("Terminal=false"));
-        assert!(entry.contains("cd \"/home/u/My Projects/lidar/crates/landscapes-generator\""));
-        assert!(entry.contains("\"/home/u/.cargo/bin/cargo\" run -p landscapes-generator"));
+        assert!(
+            entry.contains("cd \\\"/home/u/My Projects/lidar/crates/landscapes-generator\\\""),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("\\\"/home/u/.cargo/bin/cargo\\\" run -p landscapes-generator"),
+            "{entry}"
+        );
         assert!(entry.contains("Icon=/home/u/My Projects/lidar/icon.png"));
         entry.lines().for_each(|line| assert!(!line.contains('%'), "{line}"));
+        assert!(
+            entry.contains(
+                "Exec=sh -c \"cd \\\"/home/u/My Projects/lidar/crates/landscapes-generator\\\" && "
+            ),
+            "{entry}"
+        );
     }
 
     #[test]
@@ -140,6 +151,15 @@ mod tests {
         )
         .unwrap_err();
         assert!(quote.contains('"'), "{quote}");
+
+        let dollar = super::desktop_entry(
+            &app(),
+            std::path::Path::new("/home/u/$HOME/lidar"),
+            &crate::paths::CargoPath("cargo".into()),
+            std::path::Path::new("/icon.png"),
+        )
+        .unwrap_err();
+        assert!(dollar.contains('/'), "{dollar}");
     }
 
     #[test]
