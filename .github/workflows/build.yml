@@ -37,6 +37,10 @@ jobs:
         working-directory: crates/lidar-dataset-runner/ui
         run: npm ci
 
+      - name: Тесты фронтенда
+        working-directory: crates/lidar-dataset-runner/ui
+        run: npm run test
+
       - name: Тесты
         run: cargo test --locked --workspace
 
