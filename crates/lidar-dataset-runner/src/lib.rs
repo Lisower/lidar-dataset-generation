@@ -38,6 +38,7 @@ pub fn run() {
             commands::catalog,
             commands::point_classes,
             commands::default_output_dir,
+            commands::preview_generation,
             commands::start_generation,
             commands::cancel_generation,
         ])

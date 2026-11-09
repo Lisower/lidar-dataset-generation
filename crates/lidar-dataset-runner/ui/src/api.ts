@@ -104,9 +104,24 @@ export interface RunReport {
   cancelled: boolean;
 }
 
+export interface ScenePreview {
+  index: number;
+  seed: number;
+  frame: string;
+  bbox: BBox;
+  points: number[];
+  classes: number[];
+  pointsTotal: number;
+  pointsShown: number;
+  stats: SceneStats;
+}
+
 export const getCatalog = () => invoke<CatalogInfo>("catalog");
 export const getPointClasses = () => invoke<ClassDto[]>("point_classes");
 export const getDefaultOutputDir = () => invoke<string>("default_output_dir");
+
+export const previewGeneration = (recipe: Recipe, index: number) =>
+  invoke<ScenePreview>("preview_generation", { recipe, index });
 
 export const startGeneration = (recipe: Recipe, outputDir: string) =>
   invoke<string>("start_generation", { recipe, outputDir });

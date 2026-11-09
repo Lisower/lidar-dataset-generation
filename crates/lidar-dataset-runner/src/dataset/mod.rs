@@ -8,6 +8,7 @@ pub mod catalog;
 pub mod export;
 pub mod job;
 pub mod merge;
+pub mod preview;
 pub mod recipe;
 pub mod scene;
 pub mod stats;

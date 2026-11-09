@@ -59,11 +59,50 @@ textarea {
 input,
 select,
 textarea {
-  background: var(--bg);
+  /* WebKitGTK рисует поля нативным виджетом и берёт его цвета из
+     системной темы, а не из CSS: без appearance: none белый фон
+     остаётся белым, а белый текст на нём не виден. */
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
   padding: 6px 8px;
+  width: 100%;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+input[type="number"] {
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+select {
+  background-color: var(--bg);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) calc(50% - 2px),
+    calc(100% - 11px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+option {
+  background-color: var(--surface);
+  color: var(--text);
 }
 
 input:disabled,

@@ -6,6 +6,7 @@ import RecipeForm from "./components/RecipeForm.vue";
 import StatusPill from "./components/StatusPill.vue";
 import RunProgress from "./components/RunProgress.vue";
 import StatsTable from "./components/StatsTable.vue";
+import SceneViewer from "./components/SceneViewer.vue";
 import { type RunState } from "./lib/labels";
 import {
   clearDraft,
@@ -22,12 +23,14 @@ import {
   onFailed,
   onFinished,
   onProgress,
+  previewGeneration,
   startGeneration,
   type Catalog,
   type ClassDto,
   type ProgressEvent,
   type Recipe,
   type RunReport,
+  type ScenePreview,
   type UnlistenFn,
   type ValidationIssue,
 } from "./api";
@@ -58,6 +61,10 @@ const failure = ref("");
 const jobId = ref<string | null>(null);
 const progress = ref<ProgressEvent | null>(null);
 const report = ref<RunReport | null>(null);
+const preview = ref<ScenePreview | null>(null);
+const previewLoading = ref(false);
+const previewError = ref("");
+const previewIndex = ref(0);
 
 const stored = loadDraft();
 
@@ -87,7 +94,9 @@ const startDisabled = computed(
   () => running.value || presetsRoot.value === null || catalogEmpty.value,
 );
 
-const showEmptyState = computed(() => state.value === "idle" && report.value === null);
+const catalogueReady = computed(() => presetsRoot.value !== null && !catalogEmpty.value);
+
+const canPreview = computed(() => catalogueReady.value);
 
 async function loadCatalog() {
   const info = await getCatalog();
@@ -141,6 +150,34 @@ async function start() {
     }
     failure.value = String(error);
     state.value = "failed";
+  }
+}
+
+async function loadPreview() {
+  if (!canPreview.value || previewLoading.value) {
+    return;
+  }
+  previewLoading.value = true;
+  previewError.value = "";
+  try {
+    preview.value = await previewGeneration(recipe.value, previewIndex.value);
+  } catch (error) {
+    const parsed = validationIssues(error);
+    if (parsed) {
+      issues.value = parsed;
+      previewError.value = "Рецепт не прошёл проверку, посмотрите сводку ошибок в форме.";
+    } else {
+      previewError.value = String(error);
+    }
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
+function setPreviewIndex(value: number) {
+  previewIndex.value = value;
+  if (preview.value) {
+    void loadPreview();
   }
 }
 
@@ -248,17 +285,49 @@ onUnmounted(() => {
     </div>
 
     <main class="app-main" :aria-busy="running">
-      <div class="app-form">
-        <RecipeForm
-          :catalog="catalog"
-          :recipe="recipe"
-          :output-dir="outputDir"
-          :issues="issues"
-          :running="running"
-          @update:recipe="recipe = $event"
-          @update:output-dir="outputDir = $event"
-          @pick-output="pickOutput"
+      <section class="app-viewer">
+        <SceneViewer
+          :preview="preview"
+          :classes="classes"
+          :loading="previewLoading"
+          :error="previewError"
+          :available="catalogueReady"
+          :can-preview="canPreview"
+          :scenes-total="recipe.scenes"
+          :index="previewIndex"
+          @preview="loadPreview"
+          @update:index="setPreviewIndex"
         />
+      </section>
+
+      <aside class="app-side" aria-label="Настройки и результаты">
+        <div class="side-scroll">
+          <RecipeForm
+            :catalog="catalog"
+            :recipe="recipe"
+            :output-dir="outputDir"
+            :issues="issues"
+            :running="running"
+            @update:recipe="recipe = $event"
+            @update:output-dir="outputDir = $event"
+            @pick-output="pickOutput"
+          />
+
+          <div v-if="state === 'failed'" class="card empty-state">
+            <h2>Запуск не удался</h2>
+            <button type="button" class="btn" @click="start">Попробовать снова</button>
+          </div>
+
+          <RunProgress
+            :progress="progress"
+            :scenes-total="recipe.scenes"
+            :classes="classes"
+            :running="running"
+            :state="state"
+            @cancel="cancel"
+          />
+          <StatsTable :report="report" :classes="classes" />
+        </div>
 
         <div class="actions-bar">
           <button type="button" class="btn btn-ghost" :disabled="running" @click="resetRecipe">
@@ -277,31 +346,6 @@ onUnmounted(() => {
             Сгенерировать датасет
           </button>
         </div>
-      </div>
-
-      <aside class="app-side">
-        <div v-if="showEmptyState" class="card empty-state">
-          <h2>Здесь появится прогресс</h2>
-          <ol>
-            <li>Выберите рельеф и объекты слева</li>
-            <li>Нажмите Сгенерировать датасет</li>
-            <li>Файлы появятся в выбранной папке</li>
-          </ol>
-        </div>
-        <div v-else-if="state === 'failed'" class="card empty-state">
-          <h2>Запуск не удался</h2>
-          <button type="button" class="btn" @click="start">Попробовать снова</button>
-        </div>
-
-        <RunProgress
-          :progress="progress"
-          :scenes-total="recipe.scenes"
-          :classes="classes"
-          :running="running"
-          :state="state"
-          @cancel="cancel"
-        />
-        <StatsTable :report="report" :classes="classes" />
       </aside>
     </main>
   </div>
@@ -312,6 +356,7 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .app-header {
@@ -319,20 +364,25 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  min-height: 72px;
+  flex: none;
 }
 
 .titles {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+
+.titles h1 {
+  font-size: 16px;
 }
 
 .titles .muted {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .banner {
@@ -340,11 +390,12 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-3) var(--space-4) 0;
+  margin: var(--space-2) var(--space-4) 0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface-2);
+  flex: none;
 }
 
 .banner-error {
@@ -367,40 +418,52 @@ onUnmounted(() => {
 .app-main {
   flex: 1;
   min-height: 0;
-  overflow: auto;
   display: grid;
-  grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
-  padding: var(--space-4) var(--space-4) 0;
-}
-
-.app-form {
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 26rem);
   gap: var(--space-3);
-  min-width: 0;
+  padding: var(--space-3);
 }
 
-.actions-bar {
-  position: sticky;
-  bottom: 0;
+.app-viewer {
+  min-width: 0;
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin: 0 calc(-1 * var(--space-4));
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  padding: var(--space-3) var(--space-4);
+}
+
+.app-viewer > * {
+  width: 100%;
 }
 
 .app-side {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  min-height: 0;
   min-width: 0;
-  padding-bottom: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.actions-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3);
 }
 
 .empty-state {
@@ -416,9 +479,10 @@ onUnmounted(() => {
   color: var(--muted);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1000px) {
   .app-main {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(12rem, 40vh) minmax(0, 1fr);
   }
 }
 </style>

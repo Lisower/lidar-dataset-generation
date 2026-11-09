@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dataset::catalog::{Catalog, load_catalog};
 use crate::dataset::job::{BatchOptions, run_batch};
+use crate::dataset::preview::{ScenePreview, preview_scene};
 use crate::dataset::recipe::{Recipe, validate};
 use crate::state::{AppState, JobHandle};
 
@@ -90,6 +91,38 @@ pub fn default_output_dir(app: AppHandle) -> Result<String, String> {
     Ok(AppState::default_output_dir(documents.as_deref())
         .to_string_lossy()
         .into_owned())
+}
+
+/// Собрать превью сцены `index` без записи файлов.
+///
+/// Кнопка просмотра не должна занимать задачу генерации: пользователь может
+/// смотреть сцену, пока батч пишет датасет. Ошибки валидации возвращаются тем
+/// же JSON-списком, что и у `start_generation`, чтобы форма показала их теми
+/// же подсказками.
+#[tauri::command]
+pub async fn preview_generation(
+    app: AppHandle,
+    recipe: Recipe,
+    index: u32,
+) -> Result<ScenePreview, String> {
+    let state = app.state::<AppState>();
+    let root = state
+        .paths
+        .presets_root
+        .clone()
+        .ok_or_else(|| "каталог пресетов не найден: просмотр недоступен".to_string())?;
+    let catalog = load_catalog(&root);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_scene(&catalog, &recipe, index).map_err(|error| match error {
+            crate::error::RunnerError::Validation(issues) => {
+                serde_json::to_string(&issues).unwrap_or_else(|_| "[]".to_string())
+            }
+            other => other.to_string(),
+        })
+    })
+    .await
+    .map_err(|error| format!("не удалось собрать превью: {error}"))?
 }
 
 /// Запустить генерацию и сразу вернуть идентификатор задачи.
