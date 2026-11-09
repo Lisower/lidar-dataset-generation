@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::apps::{self, LaunchApp, Selector};
 use crate::manifest::{self, Manifest, ManifestEntry, Platform};
 use crate::paths::CargoPath;
+use crate::shell::Shell;
 use crate::{linux, macos, windows};
 
 /// Разобранные флаги команды.
@@ -42,6 +43,8 @@ pub struct Env<'a> {
     pub xdg_desktop: Option<PathBuf>,
     /// `CARGO`, если задан.
     pub cargo: Option<String>,
+    /// Чем запускать сценарии, создающие ярлык.
+    pub shell: &'a dyn Shell,
 }
 
 /// Разобрать аргументы команды.
@@ -77,8 +80,7 @@ pub fn run(options: &LaunchOptions, env: &Env) -> Result<Vec<PathBuf>, String> {
 
     for app in apps::select_apps(options.apps) {
         for path in target_paths(app, env, options.desktop) {
-            let content = render(app, env, &cargo, &icon)?;
-            write(&path, &content, env.platform)?;
+            install(app, env, &cargo, &icon, &path)?;
             written.push(path.clone());
             entries.push(ManifestEntry {
                 app: app.id.to_string(),
@@ -163,48 +165,48 @@ fn desktop_dir(env: &Env) -> Option<PathBuf> {
     }
 }
 
-/// Содержимое ярлыка по правилам платформы.
-fn render(
+/// Создать один ярлык по правилам платформы.
+///
+/// Linux и macOS получают готовый текстовый файл, Windows — сценарий PowerShell:
+/// `.lnk` это бинарный формат, в него нельзя записать текст напрямую.
+fn install(
     app: &LaunchApp,
     env: &Env,
     cargo: &CargoPath,
     icon: &Path,
-) -> Result<String, String> {
+    path: &Path,
+) -> Result<(), String> {
     match env.platform {
-        Platform::Linux => linux::desktop_entry(app, env.crate_root, cargo, icon),
-        Platform::MacOs => macos::command_script(app, env.crate_root, cargo),
+        Platform::Linux => {
+            let entry = linux::desktop_entry(app, env.crate_root, cargo, icon)?;
+            linux::write_entry(path, &entry)
+        }
+        Platform::MacOs => {
+            let script = macos::command_script(app, env.crate_root, cargo)?;
+            write_script(path, &script)?;
+            make_executable(path)
+        }
         Platform::Windows => {
-            let name = shortcut_name(app, env.platform);
-            let lnk = primary_dir(env)
-                .map(|dir| dir.join(&name))
-                .unwrap_or_else(|| PathBuf::from(&name));
-            windows::shortcut_script(app, env.crate_root, cargo, &lnk, icon)
+            let script = windows::shortcut_script(app, env.crate_root, cargo, path, icon)?;
+            env.shell
+                .run_powershell(&script)
+                .map_err(|error| format!("не удалось создать ярлык {}: {error}", path.display()))
         }
     }
 }
 
-/// Записать ярлык; на macOS дополнительно сделать его исполняемым.
-fn write(path: &Path, content: &str, platform: Platform) -> Result<(), String> {
-    match platform {
-        Platform::Linux => linux::write_entry(path, content),
-        Platform::Windows | Platform::MacOs => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    format!(
-                        "не удалось создать каталог ярлыков {}: {error}",
-                        parent.display()
-                    )
-                })?;
-            }
-            std::fs::write(path, content).map_err(|error| {
-                format!("не удалось записать ярлык {}: {error}", path.display())
-            })?;
-            if platform == Platform::MacOs {
-                make_executable(path)?;
-            }
-            Ok(())
-        }
+/// Записать текстовый файл ярлыка, создав каталоги.
+fn write_script(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "не удалось создать каталог ярлыков {}: {error}",
+                parent.display()
+            )
+        })?;
     }
+    std::fs::write(path, content)
+        .map_err(|error| format!("не удалось записать ярлык {}: {error}", path.display()))
 }
 
 #[cfg(unix)]
@@ -247,6 +249,41 @@ fn icon_path(crate_root: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    /// Подмена PowerShell: запоминает сценарии вместо выполнения.
+    #[derive(Default)]
+    pub struct FakeShell {
+        scripts: RefCell<Vec<String>>,
+        fail: bool,
+    }
+
+    impl FakeShell {
+        /// Оболочка, которая всегда сообщает об ошибке.
+        pub fn failing() -> Self {
+            Self {
+                scripts: RefCell::new(Vec::new()),
+                fail: true,
+            }
+        }
+
+        /// Все сценарии, которые попросили выполнить.
+        pub fn scripts(&self) -> Vec<String> {
+            self.scripts.borrow().clone()
+        }
+    }
+
+    impl crate::shell::Shell for FakeShell {
+        fn run_powershell(&self, the_script: &str) -> Result<(), String> {
+            self.scripts.borrow_mut().push(the_script.to_string());
+            if self.fail {
+                Err("сценарий не выполнен".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn repo_root() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
@@ -290,6 +327,7 @@ mod tests {
             appdata: None,
             xdg_desktop: None,
             cargo: Some("cargo".into()),
+            shell: &FakeShell::default(),
         };
         let written = super::run(
             &super::LaunchOptions {
@@ -327,6 +365,7 @@ mod tests {
             appdata: None,
             xdg_desktop: None,
             cargo: None,
+            shell: &FakeShell::default(),
         };
         let error = super::remove_all(&env).unwrap_err();
         assert!(error.contains("ярлык"), "{error}");
@@ -345,6 +384,7 @@ mod tests {
             appdata: None,
             xdg_desktop: None,
             cargo: Some("cargo".into()),
+            shell: &FakeShell::default(),
         };
         super::run(
             &super::LaunchOptions {
@@ -376,6 +416,7 @@ mod tests {
             appdata: Some(data.join("appdata")),
             xdg_desktop: None,
             cargo: Some("cargo".into()),
+            shell: &FakeShell::default(),
         };
         let written = super::run(
             &super::LaunchOptions {
@@ -408,6 +449,7 @@ mod tests {
             appdata: None,
             xdg_desktop: None,
             cargo: Some("cargo".into()),
+            shell: &FakeShell::default(),
         };
         let written = super::run(
             &super::LaunchOptions {
@@ -440,6 +482,7 @@ mod tests {
             appdata: None,
             xdg_desktop: Some(data.join("Desktop")),
             cargo: Some("cargo".into()),
+            shell: &FakeShell::default(),
         };
         let written = super::run(
             &super::LaunchOptions {
@@ -452,6 +495,109 @@ mod tests {
         .unwrap();
         assert_eq!(written.len(), 2);
         assert!(data.join("Desktop/LiDAR Dataset Runner.desktop").is_file());
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn windows_shortcuts_go_through_powershell_with_their_own_path() {
+        let root = repo_root();
+        let data = temp_env("xtask-launch-windows-shell");
+        let shell = FakeShell::default();
+        let env = super::Env {
+            crate_root: &root,
+            platform: crate::manifest::Platform::Windows,
+            xdg_data_home: None,
+            home: Some(data.join("home")),
+            appdata: Some(data.join("appdata")),
+            xdg_desktop: None,
+            cargo: Some("cargo".into()),
+            shell: &shell,
+        };
+        super::run(
+            &super::LaunchOptions {
+                apps: crate::apps::Selector::Runner,
+                desktop: true,
+                remove: false,
+            },
+            &env,
+        )
+        .unwrap();
+
+        let scripts = shell.scripts();
+        assert_eq!(scripts.len(), 2, "{scripts:?}");
+        assert!(
+            scripts
+                .iter()
+                .all(|script| script.contains("WScript.Shell")),
+            "{scripts:?}"
+        );
+        assert!(
+            scripts
+                .iter()
+                .any(|script| script.contains("Start Menu") && script.contains(".lnk")),
+            "{scripts:?}"
+        );
+        assert!(
+            scripts
+                .iter()
+                .any(|script| script.contains("Desktop") && script.contains(".lnk")),
+            "{scripts:?}"
+        );
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn windows_shell_failure_names_the_shortcut() {
+        let root = repo_root();
+        let data = temp_env("xtask-launch-windows-fail");
+        let env = super::Env {
+            crate_root: &root,
+            platform: crate::manifest::Platform::Windows,
+            xdg_data_home: None,
+            home: Some(data.join("home")),
+            appdata: Some(data.join("appdata")),
+            xdg_desktop: None,
+            cargo: Some("cargo".into()),
+            shell: &FakeShell::failing(),
+        };
+        let error = super::run(
+            &super::LaunchOptions {
+                apps: crate::apps::Selector::Runner,
+                desktop: false,
+                remove: false,
+            },
+            &env,
+        )
+        .unwrap_err();
+        assert!(error.contains("LiDAR Dataset Runner.lnk"), "{error}");
+        std::fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn posix_platforms_never_call_the_shell() {
+        let root = repo_root();
+        let data = temp_env("xtask-launch-no-shell");
+        let shell = FakeShell::default();
+        let env = super::Env {
+            crate_root: &root,
+            platform: crate::manifest::Platform::Linux,
+            xdg_data_home: Some(data.join("data")),
+            home: Some(data.join("home")),
+            appdata: None,
+            xdg_desktop: None,
+            cargo: Some("cargo".into()),
+            shell: &shell,
+        };
+        super::run(
+            &super::LaunchOptions {
+                apps: crate::apps::Selector::Runner,
+                desktop: false,
+                remove: false,
+            },
+            &env,
+        )
+        .unwrap();
+        assert!(shell.scripts().is_empty());
         std::fs::remove_dir_all(&data).unwrap();
     }
 }

@@ -11,6 +11,7 @@ mod linux;
 mod macos;
 mod manifest;
 mod paths;
+mod shell;
 mod windows;
 
 use manifest::Platform;
@@ -89,6 +90,7 @@ fn environment() -> launch::Env<'static> {
         appdata: env_path("APPDATA"),
         xdg_desktop: env_path("XDG_DESKTOP_DIR"),
         cargo: Some(resolve_cargo()),
+        shell: &shell::SystemShell,
     }
 }
 
