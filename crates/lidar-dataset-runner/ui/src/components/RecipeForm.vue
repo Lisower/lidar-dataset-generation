@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { FolderOpen } from "lucide-vue-next";
+import FieldHint from "./FieldHint.vue";
+import PresetSelect from "./PresetSelect.vue";
 import type {
   Catalog,
   ElementKind,
@@ -7,6 +10,7 @@ import type {
   Recipe,
   ValidationIssue,
 } from "../api";
+import { ELEMENT_HINT, ELEMENT_TITLE, FIELD_HINT, PLACEMENT_NOTE } from "../lib/labels";
 
 const props = defineProps<{
   catalog: Catalog;
@@ -25,12 +29,7 @@ const emit = defineEmits<{
   (e: "cancel"): void;
 }>();
 
-const kinds: { kind: ElementKind; title: string }[] = [
-  { kind: "building", title: "Здания" },
-  { kind: "tree", title: "Деревья" },
-  { kind: "bush", title: "Кусты" },
-  { kind: "grass", title: "Трава" },
-];
+const kinds: ElementKind[] = ["building", "tree", "bush", "grass"];
 
 const plantTypeByKind: Record<ElementKind, string | null> = {
   building: null,
@@ -64,8 +63,8 @@ function setSlope(event: Event) {
   patch({ ...recipes.value, maxSlopeDeg: Number.isFinite(value) ? value : 0 });
 }
 
-function setLandscape(event: Event) {
-  patch({ ...recipes.value, landscape: (event.target as HTMLSelectElement).value });
+function setLandscape(value: string) {
+  patch({ ...recipes.value, landscape: value });
 }
 
 function presetsFor(kind: ElementKind) {
@@ -101,240 +100,257 @@ function updateElement(kind: ElementKind, changes: Partial<ElementSpec>) {
   patch({ ...recipes.value, elements });
 }
 
-function setPreset(kind: ElementKind, event: Event) {
-  updateElement(kind, { presetId: (event.target as HTMLSelectElement).value });
+function setPreset(kind: ElementKind, value: string) {
+  updateElement(kind, { presetId: value });
 }
 
 function setCount(kind: ElementKind, event: Event) {
   const value = Number((event.target as HTMLInputElement).value);
   updateElement(kind, { count: Number.isFinite(value) ? value : 0 });
 }
+
+function elementIssue(kind: ElementKind, suffix: "presetId" | "count"): string | undefined {
+  const index = elementIndex(kind);
+  if (index < 0) {
+    return undefined;
+  }
+  return issueFor(`elements[${index}].${suffix}`);
+}
+
+function setOutput(event: Event) {
+  emit("update:outputDir", (event.target as HTMLInputElement).value);
+}
 </script>
 
 <template>
-  <section class="panel">
-    <h2>Рецепт</h2>
+  <form class="form" @submit.prevent>
+    <fieldset class="card group">
+      <legend>Сцена</legend>
 
-    <p v-if="!presetsRoot" class="error">
-      Каталог пресетов не найден: генерация недоступна. Положите каталог
-      <code>presets/</code> рядом с приложением.
-    </p>
-    <p v-else-if="catalog.landscapes.length === 0" class="error">
-      Каталог пресетов пуст: {{ presetsRoot }}
-    </p>
+      <div class="row-3">
+        <div class="field">
+          <label for="field-scenes">Сцен</label>
+          <input
+            id="field-scenes"
+            type="number"
+            min="1"
+            max="1000"
+            :value="recipe.scenes"
+            :disabled="running"
+            @input="setScenes"
+          />
+          <FieldHint id="hint-scenes" :text="FIELD_HINT.scenes" :error="issueFor('scenes')" />
+        </div>
 
-    <div class="grid">
-      <label>
-        Сцен
-        <input
-          type="number"
-          min="1"
-          max="1000"
-          :value="recipe.scenes"
+        <div class="field">
+          <label for="field-seed">Сидовое число</label>
+          <input
+            id="field-seed"
+            type="number"
+            min="0"
+            :value="recipe.seed"
+            :disabled="running"
+            @input="setSeed"
+          />
+          <FieldHint id="hint-seed" :text="FIELD_HINT.seed" :error="issueFor('seed')" />
+        </div>
+
+        <div class="field">
+          <label for="field-slope">Максимальный уклон, °</label>
+          <input
+            id="field-slope"
+            type="number"
+            min="1"
+            max="45"
+            step="0.5"
+            :value="recipe.maxSlopeDeg"
+            :disabled="running"
+            @input="setSlope"
+          />
+          <FieldHint
+            id="hint-slope"
+            :text="FIELD_HINT.maxSlopeDeg"
+            :error="issueFor('maxSlopeDeg')"
+          />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="field-landscape">Рельеф</label>
+        <PresetSelect
+          id="field-landscape"
+          :presets="catalog.landscapes"
+          :model-value="recipe.landscape"
           :disabled="running"
-          @input="setScenes"
+          empty-text="в каталоге нет рельефов"
+          @update:model-value="setLandscape"
         />
-        <small v-if="issueFor('scenes')" class="error">{{ issueFor("scenes") }}</small>
-      </label>
+        <FieldHint id="hint-landscape" :text="FIELD_HINT.landscape" :error="issueFor('landscape')" />
+      </div>
+    </fieldset>
 
-      <label>
-        Seed
-        <input
-          type="number"
-          min="0"
-          :value="recipe.seed"
-          :disabled="running"
-          @input="setSeed"
+    <fieldset class="card group">
+      <legend>Что поставить на сцену</legend>
+
+      <div v-for="kind in kinds" :key="kind" class="element">
+        <div class="element-head">
+          <span class="element-title">{{ ELEMENT_TITLE[kind] }}</span>
+          <span class="element-hint muted">{{ ELEMENT_HINT[kind] }}</span>
+        </div>
+        <div class="element-controls">
+          <PresetSelect
+            :id="`field-element-${kind}`"
+            :presets="presetsFor(kind)"
+            :model-value="element(kind).presetId"
+            :disabled="running"
+            empty-text="нет доступных пресетов"
+            @update:model-value="setPreset(kind, $event)"
+          />
+          <input
+            :id="`field-element-${kind}-count`"
+            class="count"
+            type="number"
+            min="0"
+            max="2000"
+            :value="element(kind).count"
+            :disabled="running"
+            @input="setCount(kind, $event)"
+          />
+        </div>
+        <FieldHint
+          :id="`hint-element-${kind}`"
+          text="0 означает, что объекты этого вида не ставятся"
+          :error="elementIssue(kind, 'presetId') ?? elementIssue(kind, 'count') ?? issueFor('elements')"
         />
-      </label>
+      </div>
 
-      <label>
-        Макс. уклон, °
-        <input
-          type="number"
-          min="1"
-          max="45"
-          step="0.5"
-          :value="recipe.maxSlopeDeg"
-          :disabled="running"
-          @input="setSlope"
-        />
-        <small v-if="issueFor('maxSlopeDeg')" class="error">{{ issueFor("maxSlopeDeg") }}</small>
-      </label>
-    </div>
+      <p class="note muted">{{ PLACEMENT_NOTE }}</p>
+    </fieldset>
 
-    <label class="wide">
-      Ландшафт
-      <select :value="recipe.landscape" :disabled="running" @change="setLandscape">
-        <option v-for="preset in catalog.landscapes" :key="preset.id" :value="preset.id">
-          {{ preset.name }}
-        </option>
-      </select>
-      <small v-if="issueFor('landscape')" class="error">{{ issueFor("landscape") }}</small>
-    </label>
+    <fieldset class="card group">
+      <legend>Куда сохранять</legend>
 
-    <table class="elements">
-      <thead>
-        <tr>
-          <th>Элемент</th>
-          <th>Пресет</th>
-          <th>Количество</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in kinds" :key="row.kind">
-          <td>{{ row.title }}</td>
-          <td>
-            <select
-              :value="element(row.kind).presetId"
-              :disabled="running"
-              @change="setPreset(row.kind, $event)"
-            >
-              <option v-for="preset in presetsFor(row.kind)" :key="preset.id" :value="preset.id">
-                {{ preset.name }}
-              </option>
-            </select>
-          </td>
-          <td>
-            <input
-              type="number"
-              min="0"
-              max="2000"
-              :value="element(row.kind).count"
-              :disabled="running"
-              @input="setCount(row.kind, $event)"
-            />
-            <small v-if="issueFor(`elements[${elementIndex(row.kind)}].presetId`)" class="error">
-              {{ issueFor(`elements[${elementIndex(row.kind)}].presetId`) }}
-            </small>
-            <small v-if="issueFor(`elements[${elementIndex(row.kind)}].count`)" class="error">
-              {{ issueFor(`elements[${elementIndex(row.kind)}].count`) }}
-            </small>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <small v-if="issueFor('elements')" class="error">{{ issueFor("elements") }}</small>
-
-    <label class="wide">
-      Каталог вывода
-      <span class="row">
-        <input
-          type="text"
-          :value="outputDir"
-          :disabled="running"
-          @input="emit('update:outputDir', ($event.target as HTMLInputElement).value)"
-        />
-        <button type="button" :disabled="running" @click="emit('pick-output')">Выбрать…</button>
-      </span>
-    </label>
+      <div class="field">
+        <label for="field-output">Папка вывода</label>
+        <div class="output-row">
+          <input
+            id="field-output"
+            type="text"
+            :value="outputDir"
+            :disabled="running"
+            @input="setOutput"
+          />
+          <button type="button" class="btn" :disabled="running" @click="emit('pick-output')">
+            <FolderOpen :size="16" aria-hidden="true" />
+            Выбрать папку…
+          </button>
+        </div>
+        <FieldHint id="hint-output" :text="FIELD_HINT.outputDir" :error="issueFor('outputDir')" />
+      </div>
+    </fieldset>
 
     <div class="actions">
-      <button type="button" class="primary" :disabled="running" @click="emit('start')">
-        Сгенерировать
+      <button type="button" class="btn btn-primary" :disabled="running" @click="emit('start')">
+        Сгенерировать датасет
       </button>
-      <button type="button" :disabled="!running" @click="emit('cancel')">Отменить</button>
+      <button type="button" class="btn btn-danger" :disabled="!running" @click="emit('cancel')">
+        Остановить
+      </button>
     </div>
-  </section>
+  </form>
 </template>
 
 <style scoped>
-.panel {
+.form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
 
-.grid {
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.row-3 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
 label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.element {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  color: #b9b9c2;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
 }
 
-input,
-select {
-  background: #101014;
-  border: 1px solid #33333c;
-  border-radius: 6px;
-  color: #e8e8ea;
-  padding: 0.4rem 0.5rem;
-  font: inherit;
+.element:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
-input:disabled,
-select:disabled {
-  opacity: 0.55;
-}
-
-.elements {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.elements th {
-  text-align: left;
-  color: #9a9aa4;
-  font-weight: 500;
-  padding-bottom: 0.3rem;
-}
-
-.elements td {
-  padding: 0.2rem 0.4rem 0.2rem 0;
-  vertical-align: top;
-}
-
-.elements select,
-.elements input {
-  width: 100%;
-}
-
-.row {
+.element-head {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
-.row input {
+.element-title {
+  font-weight: 600;
+}
+
+.element-hint {
+  font-size: 12px;
+}
+
+.element-controls {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.element-controls > :first-child {
   flex: 1;
+  min-width: 0;
+}
+
+.count {
+  width: 6rem;
+}
+
+.note {
+  font-size: 12px;
+}
+
+.output-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.output-row input {
+  flex: 1;
+  min-width: 0;
 }
 
 .actions {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
-}
-
-button {
-  background: #26262e;
-  border: 1px solid #3a3a45;
-  border-radius: 6px;
-  color: #e8e8ea;
-  padding: 0.45rem 0.9rem;
-  font: inherit;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-button.primary {
-  background: #2d5cbf;
-  border-color: #3b6fd8;
-}
-
-.error {
-  color: #ff8080;
-  font-size: 0.78rem;
-  margin: 0;
+  gap: var(--space-2);
+  justify-content: flex-end;
 }
 </style>
