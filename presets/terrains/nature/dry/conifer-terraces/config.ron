@@ -4,7 +4,7 @@
     landscape_id: "multi-level",
     tree_id: "deciduous-tree",
     bush_id: "bush",
-    grass_id: "sparse-grass",
+    grass_id: "tall-grass",
     building_id: "",
     landscape_sources: [],
     tree_sources: [
@@ -33,13 +33,6 @@
         ),
     ],
     grass_sources: [
-        (
-            id: "sparse-grass",
-            group: false,
-            weight: 1.0,
-            min_water_distance: 0.0,
-            max_water_distance: None,
-        ),
         (
             id: "tall-grass",
             group: false,

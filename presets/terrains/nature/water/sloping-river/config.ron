@@ -4,7 +4,7 @@
     landscape_id: "sloping-river",
     tree_id: "deciduous-tree",
     bush_id: "bush",
-    grass_id: "sparse-grass",
+    grass_id: "tall-grass",
     building_id: "",
     landscape_sources: [],
     tree_sources: [

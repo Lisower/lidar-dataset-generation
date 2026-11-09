@@ -205,7 +205,7 @@ impl TerrainPresetData {
             landscape_id: preset.landscape().kind().into(),
             tree_id: "deciduous-tree".into(),
             bush_id: "bush".into(),
-            grass_id: "sparse-grass".into(),
+            grass_id: "tall-grass".into(),
             building_id: String::new(),
             landscape_sources: Vec::new(),
             tree_sources: Vec::new(),
@@ -247,7 +247,7 @@ impl TerrainPresetData {
                 data.trees = 40;
                 data.bushes = 24;
                 data.grass_settings.density = GrassDensity::Dense;
-                data.grass_sources = ids(&["sparse-grass", "tall-grass"]);
+                data.grass_sources = ids(&["tall-grass"]);
             }
             Woodland | WoodlandSlope | WoodlandTerraces => {
                 data.trees = 10;
@@ -282,7 +282,7 @@ impl TerrainPresetData {
                 data.buildings = if preset == Village { 9 } else { 14 };
                 data.building_id = "rectangular".into();
                 data.building_sources =
-                    ids(&["rectangular", "l-shaped", "annex", "cottage", "cabin"]);
+                    ids(&["rectangular", "l-shaped", "annex", "cabin"]);
                 data.placement.settlement = if preset == Village {
                     Settlement::Village
                 } else {

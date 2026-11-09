@@ -116,20 +116,4 @@ fn main() {
         "cabin",
         &text,
     );
-
-    let mut cottage = with_preset(BuildingPreset::WithAnnex);
-    cottage.min_size = 5.0;
-    cottage.max_size = 9.0;
-    cottage.min_floors = 1;
-    cottage.max_floors = 2;
-    let text =
-        ron::ser::to_string_pretty(&cottage, Default::default()).expect("serialize cottage config");
-    write_preset(
-        "buildings",
-        "houses/cottage",
-        "Дом с пристройкой",
-        "Сельский дом с пристройкой",
-        "cottage",
-        &text,
-    );
 }

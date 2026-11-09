@@ -182,12 +182,19 @@ fn scene_from(
                 .find(|p| p.id == id)
                 .unwrap_or(choices[index])
         } else if initial {
-            store
-                .presets
-                .iter()
-                .find(|p| Some(p.id.as_str()) == initial_id)
-                .or_else(|| choices.iter().copied().find(|p| p.kind == preset.name()))
-                .unwrap_or(choices[index])
+            if initial_id.is_some() {
+                // Явно заданный пресет из командной строки.
+                store
+                    .presets
+                    .iter()
+                    .find(|p| Some(p.id.as_str()) == initial_id)
+                    .or_else(|| choices.iter().copied().find(|p| p.kind == preset.name()))
+                    .unwrap_or(choices[index])
+            } else {
+                // Без аргумента — случайный пресет из выбранных в настройках,
+                // как в остальных генераторах.
+                store.random().unwrap_or(choices[index])
+            }
         } else {
             choices[index]
         };

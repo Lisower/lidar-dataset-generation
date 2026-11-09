@@ -1,6 +1,0 @@
-(
-    id: "cottage",
-    name: "Дом с пристройкой",
-    description: "Сельский дом с пристройкой",
-    kind: "cottage",
-)

@@ -147,11 +147,9 @@ fn generate_with_settings(preset: TerrainPreset, seed: Seed, settings: TerrainSe
         }
     }
 
-    let grass_preset = if matches!(preset, TerrainPreset::Forest | TerrainPreset::ForestCabin | TerrainPreset::River | TerrainPreset::Pond) {
-        PlantPreset::TallGrass
-    } else {
-        PlantPreset::SparseGrass
-    };
+    // Густая трава для всех территорий: редкая («жидкие пучки») больше не
+    // используется в конфигурациях.
+    let grass_preset = PlantPreset::TallGrass;
     let grass_config = plants_generator::resolve(grass_preset, seed.with_label("grass-configuration"));
     let mut grass_rng = seed.with_label("grass-positions").rng();
     let grass_patches = patch_centers(&mut grass_rng, 20);

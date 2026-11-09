@@ -4,7 +4,7 @@
     landscape_id: "plain",
     tree_id: "deciduous-tree",
     bush_id: "bush",
-    grass_id: "sparse-grass",
+    grass_id: "tall-grass",
     building_id: "skyscraper",
     landscape_sources: [],
     tree_sources: [],

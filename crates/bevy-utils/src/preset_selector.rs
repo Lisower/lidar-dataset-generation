@@ -17,8 +17,9 @@
 //!   генератор подставит новый случайный пресет из выбранных.
 //!
 //! Окно пересобирается целиком при любой смене выбора/сворачивания (просто и
-//! надёжно). Пока окно открыто, общий ресурс [`UiModalOpen`] блокирует горячие
-//! клавиши сцены (камера, `R`, `V`).
+//! надёжно), но позиция прокрутки списка сохраняется между пересборками.
+//! Пока окно открыто, общий ресурс [`UiModalOpen`] блокирует горячие клавиши
+//! сцены (камера, `R`, `V`).
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -65,6 +66,9 @@ pub struct PresetWindowState {
     /// «Применить» нажата: при закрытии сохранить выбор и (если он менялся)
     /// перегенерировать сцену.
     pub apply_requested: bool,
+    /// Позиция прокрутки списка (в логических пикселях). Сохраняется между
+    /// пересборками окна, чтобы клик по пресету не сбрасывал список наверх.
+    pub scroll_offset: f32,
     /// Корень всех пресетов (для cross-category подгрузки суб-пресетов
     /// террейнами и другими читателями).
     pub presets_root: PathBuf,
@@ -79,6 +83,11 @@ pub struct RowClickTracker(pub HashMap<String, f64>);
 
 /// Максимальный промежуток между кликами, считающийся двойным кликом.
 const DOUBLE_CLICK_SECS: f64 = 0.35;
+
+/// Маркер прокручиваемого списка пресетов: по нему окно находит текущую
+/// позицию прокрутки перед пересборкой.
+#[derive(Component, Clone, Default)]
+struct PresetListScroll;
 
 impl Plugin for PresetSelectorPlugin {
     fn build(&self, app: &mut App) {
@@ -100,6 +109,7 @@ impl Plugin for PresetSelectorPlugin {
                 collapsed: BTreeSet::new(),
                 applied,
                 apply_requested: false,
+                scroll_offset: 0.0,
                 presets_root: self.presets_root.clone(),
                 settings_dir: self.settings_dir.clone(),
             })
@@ -137,15 +147,21 @@ fn sync_preset_window(
     mut state: ResMut<PresetWindowState>,
     mut store: ResMut<PresetStore>,
     mut writer: MessageWriter<RegenerationRequest>,
+    scroll: Query<&ScrollPosition, With<PresetListScroll>>,
 ) {
     if ui.0 {
         if !state.dirty {
             return;
         }
         if let Some(root) = state.root.take() {
+            // Запомнить позицию прокрутки, чтобы после пересборки список
+            // остался там же, где был до клика.
+            if let Ok(position) = scroll.single() {
+                state.scroll_offset = position.y;
+            }
             commands.entity(root).despawn();
         }
-        let content = window_content(&store, &state.collapsed);
+        let content = window_content(&store, &state.collapsed, state.scroll_offset);
         let frame = spawn_window_frame(
             &mut commands,
             &WindowSpec {
@@ -159,6 +175,8 @@ fn sync_preset_window(
         state.dirty = false;
     } else if let Some(root) = state.root.take() {
         commands.entity(root).despawn();
+        // Новое открытие окна начинается с верхней позиции списка.
+        state.scroll_offset = 0.0;
         if state.apply_requested {
             state.apply_requested = false;
             // «Применить»: применяем выбор; перегенерация — только если он реально
@@ -181,6 +199,7 @@ fn sync_preset_window(
 fn window_content(
     store: &PresetStore,
     collapsed: &BTreeSet<String>,
+    scroll_offset: f32,
 ) -> Vec<Box<dyn SceneList>> {
     let mut rows = Vec::new();
     push_preset_rows(&mut rows, store, &store.root_presets, 0);
@@ -206,6 +225,8 @@ fn window_content(
         Children [
             #UiPresetList
             ScrollArea
+            PresetListScroll
+            ScrollPosition(Vec2::new(0.0, scroll_offset))
             Node {
                 width: percent(100),
                 min_width: px(0),

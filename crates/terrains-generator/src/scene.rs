@@ -153,7 +153,7 @@ fn buildings(items: Vec<Candidate>) -> Result<Vec<(Candidate, BuildingConfig)>, 
                     use buildings_generator::generation::config::BuildingPreset;
                     let preset = match candidate.source.id.as_str() {
                         "rectangular" | "cabin" => BuildingPreset::Rectangular,
-                        "annex" | "cottage" => BuildingPreset::WithAnnex,
+                        "annex" => BuildingPreset::WithAnnex,
                         "l-shaped" => BuildingPreset::LShaped,
                         "apartment-block" => BuildingPreset::ApartmentBlock,
                         "skyscraper" => BuildingPreset::Skyscraper,
@@ -550,6 +550,13 @@ fn house_candidate(
     let xy = road.start.lerp(road.end, rng.random_range(0.08..0.92))
         + normal * (road.width * 0.5 + radius + data.placement.setback + jitter);
     // All existing building generators place their entrance on the local south facade (-Y).
-    let toward = -normal;
+    // Face the nearest road: a house placed along one road can be closer to
+    // another one, especially near intersections.
+    let nearest = roads
+        .iter()
+        .min_by(|a, b| a.distance(xy).total_cmp(&b.distance(xy)))
+        .unwrap();
+    let toward = (nearest.nearest(xy) - xy).normalize_or_zero();
+    let toward = if toward == Vec2::ZERO { -normal } else { toward };
     (xy, toward.y.atan2(toward.x) + FRAC_PI_2)
 }

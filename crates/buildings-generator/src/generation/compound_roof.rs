@@ -190,11 +190,11 @@ fn clip(face: &Polygon, n: Vec3, d: f32) -> Option<Polygon> {
         let b = pts[(i + 1) % pts.len()];
         let da = n.dot(a) - d;
         let db = n.dot(b) - d;
-        if da <= 0.0 {
+        if da <= EPS {
             out.push(a);
         }
-        if (da < 0.0 && db > 0.0) || (da > 0.0 && db < 0.0) {
-            out.push(a.lerp(b, da / (da - db)));
+        if (da <= EPS && db > EPS) || (da > EPS && db <= EPS) {
+            out.push(a.lerp(b, (da / (da - db)).clamp(0.0, 1.0)));
         }
     }
     clean(out)
@@ -259,6 +259,58 @@ mod tests {
                 "{style:?}: roof must meet the wall without a gap"
             );
         }
+    }
+
+    #[test]
+    fn joint_wall_covers_the_area_above_the_wing_roof() {
+        let config = BuildingConfig {
+            point_step: 0.5,
+            point_jitter: 0.0,
+            ..Default::default()
+        };
+        let mut b = Building::generate(&config);
+        b.roof = RoofStyle::Gable;
+        b.roof_pitch_deg = 28.366875;
+
+        // Same footprint as the annex preset: the wing is longer along X,
+        // so its gable end faces the main volume at the joint.
+        let main = Section::new(-1.8, 7.5, -5.5870824, 5.5870824, 6.1112523);
+        let wing = Section::new(-7.5, -1.8, -5.5870824, 0.0, 1.986157);
+        let joint = -1.8;
+        let roof = build(main, wing, joint, &b, &config);
+        let gables = roof
+            .children
+            .iter()
+            .find(|part| part.name == "compound-gables")
+            .expect("compound-gables");
+
+        // A point above the far roof slope but below the near slope's
+        // extension used to fall into a triangular hole.
+        let p = Vec3::new(joint, -1.0, 3.5);
+        let covered = gables.faces.iter().any(|face| {
+            face.points().iter().all(|q| (q.x - joint).abs() < EPS)
+                && face.normal().x.abs() > 0.9
+                && point_in_convex(face.points(), p)
+        });
+        assert!(covered, "joint wall has a hole at {p:?}");
+    }
+
+    fn point_in_convex(poly: &[Vec3], p: Vec3) -> bool {
+        let mut sign = 0.0_f32;
+        for i in 0..poly.len() {
+            let a = poly[i];
+            let b = poly[(i + 1) % poly.len()];
+            let cross = (b.y - a.y) * (p.z - a.z) - (b.z - a.z) * (p.y - a.y);
+            if cross.abs() < 1e-6 {
+                continue;
+            }
+            if sign == 0.0 {
+                sign = cross.signum();
+            } else if cross.signum() != sign {
+                return false;
+            }
+        }
+        true
     }
 
     #[test]

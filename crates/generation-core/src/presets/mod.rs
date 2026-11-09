@@ -850,7 +850,7 @@ mod tests {
             ("plants", "bush"),
             ("plants", "tall-grass"),
             ("landscapes", "plain"),
-            ("buildings", "cottage"),
+            ("buildings", "annex"),
         ] {
             let meta = resolve_cross_category(category, id, &root)
                 .unwrap_or_else(|| panic!("не нашёл {category}/{id} в {}", root.display()));

@@ -107,6 +107,15 @@ fn main() {
         }
         return;
     }
+    // Без явного аргумента открываем случайный пресет из выбранных в настройках
+    // (как остальные генераторы), а не «поле». `Custom` без `initial_id`
+    // отключает привязку к архетипу и заставляет `scene_from` взять выбор из
+    // `PresetStore`.
+    let (initial_preset, initial_id) = if positional.is_empty() {
+        (TerrainPreset::Custom, None)
+    } else {
+        (preset, meta.map(|meta| meta.id.clone()))
+    };
     App::new()
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
@@ -122,8 +131,8 @@ fn main() {
             GenerationControlsPlugin { initial_seed: seed },
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 145.0),
             viewer::TerrainViewerPlugin {
-                initial_preset: preset,
-                initial_id: meta.map(|meta| meta.id.clone()),
+                initial_preset,
+                initial_id,
             },
             selector,
         ))
