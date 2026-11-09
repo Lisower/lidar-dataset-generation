@@ -73,6 +73,9 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::Yucca {
             return Self::build_yucca(config);
         }
+        if config.preset == PlantPreset::Agave {
+            return Self::build_agave(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -583,6 +586,53 @@ impl PlantSkeleton {
         Self::finish(&mut skeleton);
         skeleton
     }
+
+    fn build_agave(config: &PlantConfig) -> Self {
+    let mut rng = config.seed.with_label("agave_skeleton").rng();
+
+    let mut skeleton = Self {
+        points: Vec::new(),
+        segments: Vec::new(),
+        height: 0.0,
+        ground_radius: 0.0,
+    };
+
+    // Агава растёт непосредственно от земли.
+    // Небольшой центральный сегмент нужен только как точка,
+    // от которой будет строиться прикорневая розетка листьев.
+    let base_radius = rng.random_range(0.10_f32..=0.14_f32);
+    let center_height = rng.random_range(0.035_f32..=0.055_f32);
+
+    skeleton.points.push(SkeletonPoint {
+        position: Vec3::ZERO,
+        radius: base_radius,
+        taper: 1.0,
+        level: 0,
+        branch_id: 0,
+        children_count: 0,
+    });
+
+    skeleton.points.push(SkeletonPoint {
+        position: Vec3::Z * center_height,
+        radius: base_radius * 0.85,
+        taper: 0.85,
+        level: 0,
+        branch_id: 0,
+        children_count: 0,
+    });
+
+    skeleton.segments.push(SkeletonSegment {
+        from: 0,
+        to: 1,
+    });
+
+    // Размеры учитывают прикорневую розетку агавы, а не только
+    // технический центральный сегмент скелета.
+    skeleton.height = 0.75;
+    skeleton.ground_radius = 0.95;
+
+    skeleton
+}
 
         /// Специальное построение можжевельника:
         /// низкий раскидистый куст с несколькими основными побегами

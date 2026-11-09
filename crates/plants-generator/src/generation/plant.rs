@@ -16,7 +16,12 @@ use generation_core::point_clouds::primitives::{GridNoise, apply_noise};
 use generation_core::{PointCloud, Seed};
 
 use super::config::{PlantConfig, PlantPreset};
-use super::foliage::{build_cactus_flower, build_cactus_needles, build_foliage};
+use super::foliage::{
+    build_agave_edges,
+    build_cactus_flower,
+    build_cactus_needles,
+    build_foliage,
+};
 use super::part::Part;
 use super::skeleton::PlantSkeleton;
 
@@ -188,6 +193,32 @@ impl Plant {
             )
             .child(needles_part)
             .child(flower_part)
+                } else if config.preset == PlantPreset::Agave {
+            let edges = build_agave_edges(&skeleton, config);
+
+            let leaves_part = Part::new(
+                "листья",
+                config.foliage.color,
+                foliage.faces,
+                true,
+                foliage.cloud,
+            );
+
+            let edges_part = Part::new(
+                "кромка",
+                Color::srgb(0.34, 0.48, 0.37),
+                edges.faces,
+                true,
+                edges.cloud,
+            );
+
+            Part::group(
+                "листва",
+                config.foliage.color,
+                bevy::transform::components::Transform::IDENTITY,
+            )
+            .child(leaves_part)
+            .child(edges_part)
         } else {
             Part::new(
                 "листва",
