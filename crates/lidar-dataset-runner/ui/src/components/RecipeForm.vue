@@ -28,7 +28,6 @@ const emit = defineEmits<{
   (e: "pick-output"): void;
   (e: "start"): void;
   (e: "reset"): void;
-  (e: "cancel"): void;
 }>();
 
 const kinds: ElementKind[] = ["building", "tree", "bush", "grass"];
@@ -293,9 +292,6 @@ function focusField(field: string) {
       </button>
       <button type="button" class="btn btn-primary" :disabled="running" @click="emit('start')">
         Сгенерировать датасет
-      </button>
-      <button type="button" class="btn btn-danger" :disabled="!running" @click="emit('cancel')">
-        Остановить
       </button>
     </div>
   </form>

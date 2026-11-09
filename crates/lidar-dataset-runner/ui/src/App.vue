@@ -210,7 +210,6 @@ onUnmounted(() => {
         @pick-output="pickOutput"
         @start="start"
         @reset="resetRecipe"
-        @cancel="cancel"
       />
 
       <div class="right">
@@ -219,6 +218,7 @@ onUnmounted(() => {
           :scenes-total="recipe.scenes"
           :classes="classes"
           :running="state === 'running'"
+          @cancel="cancel"
         />
         <StatsTable :report="report" :classes="classes" />
       </div>

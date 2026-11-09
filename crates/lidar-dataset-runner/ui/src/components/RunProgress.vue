@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { ClassDto, ProgressEvent } from "../api";
+import { etaMs, formatDuration, formatPoints, percent, pluralRu } from "../lib/format";
+import CancelButton from "./CancelButton.vue";
 
 const props = defineProps<{
   progress: ProgressEvent | null;
@@ -9,14 +11,13 @@ const props = defineProps<{
   running: boolean;
 }>();
 
-const percent = computed(() => {
-  const total = props.progress?.scenesTotal ?? props.scenesTotal;
-  if (!total) {
-    return 0;
-  }
-  const done = props.progress?.scenesDone ?? 0;
-  return Math.min(100, Math.round((done / total) * 100));
-});
+const emit = defineEmits<{ (e: "cancel"): void }>();
+
+const done = computed(() => props.progress?.scenesDone ?? 0);
+const total = computed(() => props.progress?.scenesTotal ?? props.scenesTotal);
+const elapsedMs = computed(() => props.progress?.elapsedMs ?? 0);
+
+const percentDone = computed(() => percent(done.value, total.value));
 
 const pointsPerSecond = computed(() => {
   if (!props.progress || props.progress.elapsedMs <= 0) {
@@ -25,7 +26,9 @@ const pointsPerSecond = computed(() => {
   return Math.round((props.progress.pointsTotal / props.progress.elapsedMs) * 1000);
 });
 
-const seconds = computed(() => ((props.progress?.elapsedMs ?? 0) / 1000).toFixed(1));
+const eta = computed(() => etaMs(elapsedMs.value, done.value, total.value));
+
+const scenesWord = computed(() => pluralRu(total.value, ["сцена", "сцены", "сцен"]));
 
 function colorFor(code: number): string {
   return props.classes.find((item) => item.code === code)?.color ?? "#888888";
@@ -45,29 +48,49 @@ const classRows = computed(() => {
 </script>
 
 <template>
-  <section class="panel">
+  <section class="card panel">
     <h2>Прогресс</h2>
 
-    <div class="bar">
-      <div class="fill" :style="{ width: percent + '%' }" />
+    <div
+      class="bar"
+      role="progressbar"
+      aria-label="Записано сцен"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="percentDone"
+    >
+      <div class="fill" :style="{ width: percentDone + '%' }" />
     </div>
 
-    <div class="facts">
-      <span>{{ progress?.scenesDone ?? 0 }} / {{ progress?.scenesTotal ?? scenesTotal }} сцен</span>
-      <span>{{ (progress?.pointsTotal ?? 0).toLocaleString("ru-RU") }} точек</span>
-      <span>{{ pointsPerSecond.toLocaleString("ru-RU") }} точек/с</span>
-      <span>{{ seconds }} с</span>
+    <div class="facts numeric">
+      <span>{{ done }} из {{ total }} {{ scenesWord }}</span>
+      <span>{{ formatPoints(progress?.pointsTotal ?? 0) }} точек</span>
+      <span>{{ formatPoints(pointsPerSecond) }} точек в секунду</span>
+      <span>прошло {{ formatDuration(elapsedMs) }}</span>
     </div>
 
-    <p v-if="running && !progress" class="hint">первая сцена считается…</p>
+    <p v-if="eta !== null && running" class="estimate">
+      Осталось примерно {{ formatDuration(eta) }}
+    </p>
+    <p v-else-if="running" class="estimate muted">Считаем первую сцену…</p>
+    <p v-else-if="progress" class="estimate">Готово за {{ formatDuration(elapsedMs) }}</p>
+
+    <div v-if="running && !progress" class="first-scene">
+      <p>Готовим первую сцену: читаем пресеты и считаем рельеф</p>
+      <p class="muted">Обычно это занимает несколько секунд</p>
+    </div>
 
     <ul v-if="classRows.length" class="classes">
       <li v-for="row in classRows" :key="row.code">
         <span class="dot" :style="{ background: colorFor(row.code) }" />
         <span class="name">{{ labelFor(row.code) }}</span>
-        <span class="count">{{ row.count.toLocaleString("ru-RU") }}</span>
+        <span class="count numeric">{{ formatPoints(row.count) }}</span>
       </li>
     </ul>
+
+    <div class="actions">
+      <CancelButton :running="running" @cancel="emit('cancel')" />
+    </div>
   </section>
 </template>
 
@@ -75,34 +98,43 @@ const classRows = computed(() => {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-2);
 }
 
 .bar {
   height: 8px;
-  background: #22222a;
+  background: var(--surface-2);
   border-radius: 999px;
   overflow: hidden;
 }
 
 .fill {
   height: 100%;
-  background: #2d5cbf;
+  background: var(--accent);
   transition: width 0.2s ease;
 }
 
 .facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  font-size: 0.85rem;
-  color: #b9b9c2;
+  gap: var(--space-3);
+  font-size: 13px;
+  color: var(--muted);
 }
 
-.hint {
-  margin: 0;
-  font-size: 0.8rem;
-  color: #8a8a94;
+.estimate {
+  font-size: 13px;
+}
+
+.first-scene {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.first-scene .muted {
+  font-size: 12px;
 }
 
 .classes {
@@ -111,28 +143,29 @@ const classRows = computed(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.82rem;
+  gap: var(--space-1);
+  font-size: 13px;
 }
 
 .classes li {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .dot {
-  width: 0.65rem;
-  height: 0.65rem;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 
 .name {
   flex: 1;
-  color: #b9b9c2;
+  color: var(--muted);
 }
 
-.count {
-  font-variant-numeric: tabular-nums;
+.actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
