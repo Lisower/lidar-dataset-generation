@@ -1,5 +1,5 @@
-import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClassDto, ScenePreview } from "../api";
 import SceneViewer from "./SceneViewer.vue";
 
@@ -39,6 +39,20 @@ const baseProps = {
   available: true,
   canPreview: true,
 };
+
+type FakeContext = { setTransform: () => void; clearRect: () => void; fillRect: () => void };
+let context: FakeContext;
+let getContext: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  context = { setTransform: vi.fn(), clearRect: vi.fn(), fillRect: vi.fn() };
+  getContext = vi.fn(() => context);
+  HTMLCanvasElement.prototype.getContext = getContext as unknown as typeof HTMLCanvasElement.prototype.getContext;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("SceneViewer", () => {
   it("invites the user to build a scene before anything exists", () => {
@@ -85,6 +99,38 @@ describe("SceneViewer", () => {
       props: { ...baseProps, preview: null, error: "ландшафт «river» не найден" },
     });
     expect(wrapper.text()).toContain("ландшафт «river» не найден");
+  });
+
+  it("paints the scene as soon as it arrives, without any pointer event", async () => {
+    const wrapper = mount(SceneViewer, {
+      props: { ...baseProps, preview: null },
+    });
+    expect(getContext).not.toHaveBeenCalled();
+
+    await wrapper.setProps({ preview });
+    await flushPromises();
+
+    expect(getContext).toHaveBeenCalled();
+    expect(context.fillRect).toHaveBeenCalled();
+  });
+
+  it("paints a scene that was already present when the view was created", async () => {
+    mount(SceneViewer, { props: baseProps });
+    await flushPromises();
+    expect(context.fillRect).toHaveBeenCalled();
+  });
+
+  it("still paints when the environment has no ResizeObserver", async () => {
+    const original = globalThis.ResizeObserver;
+    // @ts-expect-error окружение без ResizeObserver
+    delete globalThis.ResizeObserver;
+    try {
+      mount(SceneViewer, { props: baseProps });
+      await flushPromises();
+      expect(context.fillRect).toHaveBeenCalled();
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
   });
 
   it("switches the scene index", async () => {

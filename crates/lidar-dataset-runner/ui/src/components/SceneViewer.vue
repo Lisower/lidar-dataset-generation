@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Eye, RotateCcw } from "lucide-vue-next";
 import type { ClassDto, ScenePreview } from "../api";
 import { formatPoints } from "../lib/format";
@@ -120,20 +120,40 @@ function draw() {
 
 let resizeObserver: ResizeObserver | null = null;
 
-onMounted(() => {
-  draw();
-  if (typeof ResizeObserver !== "undefined" && frame.value) {
+// Холст живёт под `v-if`: на момент монтирования его может не быть, поэтому
+// наблюдение за размером перевешивается каждый раз, когда сцена появляется.
+function observeFrame() {
+  if (typeof ResizeObserver === "undefined") {
+    return;
+  }
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (frame.value) {
     resizeObserver = new ResizeObserver(() => draw());
     resizeObserver.observe(frame.value);
   }
-});
+}
+
+async function render() {
+  await nextTick();
+  observeFrame();
+  draw();
+}
+
+onMounted(render);
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
 });
 
-watch(() => [props.preview, props.classes], () => draw(), { deep: false });
+watch(
+  () => [props.preview, props.classes],
+  () => {
+    void render();
+  },
+  { deep: false, flush: "post" },
+);
 
 let dragging = false;
 let lastX = 0;
