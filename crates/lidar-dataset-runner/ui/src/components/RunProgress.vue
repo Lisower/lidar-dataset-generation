@@ -31,7 +31,7 @@ const eta = computed(() => etaMs(elapsedMs.value, done.value, total.value));
 const scenesWord = computed(() => pluralRu(total.value, ["сцена", "сцены", "сцен"]));
 
 function colorFor(code: number): string {
-  return props.classes.find((item) => item.code === code)?.color ?? "#888888";
+  return props.classes.find((item) => item.code === code)?.color ?? "var(--muted)";
 }
 
 function labelFor(code: number): string {

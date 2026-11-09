@@ -23,7 +23,7 @@ const classCodes = computed(() => {
 });
 
 function colorFor(code: number): string {
-  return props.classes.find((item) => item.code === code)?.color ?? "#888888";
+  return props.classes.find((item) => item.code === code)?.color ?? "var(--muted)";
 }
 
 function labelFor(code: number): string {

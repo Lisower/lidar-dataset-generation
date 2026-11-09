@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Play, RotateCcw } from "lucide-vue-next";
 import RecipeForm from "./components/RecipeForm.vue";
 import StatusPill from "./components/StatusPill.vue";
+import CancelButton from "./components/CancelButton.vue";
 import RunProgress from "./components/RunProgress.vue";
 import StatsTable from "./components/StatsTable.vue";
 import { type RunState } from "./lib/labels";
@@ -31,17 +33,6 @@ import {
   type ValidationIssue,
 } from "./api";
 
-const state = ref<RunState>("idle");
-const catalog = ref<Catalog>({ landscapes: [], buildings: [], plants: [] });
-const presetsRoot = ref<string | null>(null);
-const classes = ref<ClassDto[]>([]);
-const outputDir = ref("");
-const issues = ref<ValidationIssue[]>([]);
-const failure = ref("");
-const jobId = ref<string | null>(null);
-const progress = ref<ProgressEvent | null>(null);
-const report = ref<RunReport | null>(null);
-
 const DEFAULT_RECIPE: Recipe = {
   scenes: 2,
   seed: 42,
@@ -55,6 +46,20 @@ const DEFAULT_RECIPE: Recipe = {
   ],
 };
 
+const CATALOGUE_MISSING =
+  "Каталог пресетов не найден. Приложению нужна папка presets рядом с исполняемым файлом или переменная окружения LIDAR_PRESETS_ROOT.";
+
+const state = ref<RunState>("idle");
+const catalog = ref<Catalog>({ landscapes: [], buildings: [], plants: [] });
+const presetsRoot = ref<string | null>(null);
+const classes = ref<ClassDto[]>([]);
+const outputDir = ref("");
+const issues = ref<ValidationIssue[]>([]);
+const failure = ref("");
+const jobId = ref<string | null>(null);
+const progress = ref<ProgressEvent | null>(null);
+const report = ref<RunReport | null>(null);
+
 const stored = loadDraft();
 
 const recipe = ref<Recipe>(stored?.recipe ?? structuredClone(DEFAULT_RECIPE));
@@ -62,6 +67,28 @@ const recipe = ref<Recipe>(stored?.recipe ?? structuredClone(DEFAULT_RECIPE));
 let unlisten: UnlistenFn[] = [];
 let draftTimer: ReturnType<typeof setTimeout> | null = null;
 let restoredOutputDir = stored?.outputDir ?? null;
+
+const running = computed(() => state.value === "running");
+
+const catalogEmpty = computed(
+  () => presetsRoot.value !== null && catalog.value.landscapes.length === 0,
+);
+
+const catalogueProblem = computed(() => {
+  if (presetsRoot.value === null) {
+    return CATALOGUE_MISSING;
+  }
+  if (catalogEmpty.value) {
+    return `Каталог пресетов пуст: ${presetsRoot.value}`;
+  }
+  return "";
+});
+
+const startDisabled = computed(
+  () => running.value || presetsRoot.value === null || catalogEmpty.value,
+);
+
+const showEmptyState = computed(() => state.value === "idle" && report.value === null);
 
 async function loadCatalog() {
   const info = await getCatalog();
@@ -96,7 +123,7 @@ function validationIssues(raw: unknown): ValidationIssue[] | null {
 }
 
 async function start() {
-  if (state.value === "running") {
+  if (startDisabled.value) {
     return;
   }
   issues.value = [];
@@ -116,6 +143,13 @@ async function start() {
     failure.value = String(error);
     state.value = "failed";
   }
+}
+
+async function cancel() {
+  if (!jobId.value) {
+    return;
+  }
+  await cancelGeneration(jobId.value);
 }
 
 function scheduleDraftSave() {
@@ -144,13 +178,6 @@ async function resetRecipe() {
   issues.value = [];
   await loadCatalog();
   outputDir.value = await getDefaultOutputDir();
-}
-
-async function cancel() {
-  if (!jobId.value) {
-    return;
-  }
-  await cancelGeneration(jobId.value);
 }
 
 onMounted(async () => {
@@ -189,93 +216,196 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main>
-    <header>
-      <h1>LiDAR Dataset Runner</h1>
+  <div class="app">
+    <header class="app-header">
+      <div class="titles">
+        <h1>LiDAR Dataset Runner</h1>
+        <p class="muted">Собирает сцены с рельефом, зданиями и растениями в облака точек</p>
+      </div>
       <StatusPill :state="state" />
     </header>
 
+    <div v-if="catalogueProblem" class="banner banner-error">
+      <p class="banner-title">{{ catalogueProblem }}</p>
+    </div>
+
     <div v-if="failure" class="banner banner-error">
-      <p class="banner-title">Запуск прерван: {{ failure }}</p>
+      <p class="banner-title">Запуск прерван</p>
+      <p class="banner-text">{{ failure }}</p>
       <button type="button" class="btn btn-ghost" @click="failure = ''">Скрыть</button>
     </div>
 
-    <div class="layout">
-      <RecipeForm
-        :catalog="catalog"
-        :presets-root="presetsRoot"
-        :recipe="recipe"
-        :output-dir="outputDir"
-        :issues="issues"
-        :running="state === 'running'"
-        @update:recipe="recipe = $event"
-        @update:output-dir="outputDir = $event"
-        @pick-output="pickOutput"
-        @start="start"
-        @reset="resetRecipe"
-      />
+    <main class="app-main" :aria-busy="running">
+      <div class="app-form">
+        <RecipeForm
+          :catalog="catalog"
+          :presets-root="presetsRoot"
+          :recipe="recipe"
+          :output-dir="outputDir"
+          :issues="issues"
+          :running="running"
+          @update:recipe="recipe = $event"
+          @update:output-dir="outputDir = $event"
+          @pick-output="pickOutput"
+        />
 
-      <div class="right">
+        <div class="actions-bar">
+          <button type="button" class="btn btn-ghost" :disabled="running" @click="resetRecipe">
+            <RotateCcw :size="16" aria-hidden="true" />
+            Сбросить настройки
+          </button>
+          <button
+            id="start-run"
+            type="button"
+            class="btn btn-primary"
+            :disabled="startDisabled"
+            :title="catalogueProblem || undefined"
+            @click="start"
+          >
+            <Play :size="16" aria-hidden="true" />
+            Сгенерировать датасет
+          </button>
+          <CancelButton :running="running" @cancel="cancel" />
+        </div>
+      </div>
+
+      <aside class="app-side">
+        <div v-if="showEmptyState" class="card empty-state">
+          <h2>Здесь появится прогресс</h2>
+          <ol>
+            <li>Выберите рельеф и объекты слева</li>
+            <li>Нажмите Сгенерировать датасет</li>
+            <li>Файлы появятся в выбранной папке</li>
+          </ol>
+        </div>
+        <div v-else-if="state === 'failed'" class="card empty-state">
+          <h2>Запуск не удался</h2>
+          <button type="button" class="btn" @click="start">Попробовать снова</button>
+        </div>
+
         <RunProgress
           :progress="progress"
           :scenes-total="recipe.scenes"
           :classes="classes"
-          :running="state === 'running'"
+          :running="running"
           @cancel="cancel"
         />
         <StatsTable :report="report" :classes="classes" />
-      </div>
-    </div>
-  </main>
+      </aside>
+    </main>
+  </div>
 </template>
 
-<style>
-body {
-  margin: 0;
-  font-family: system-ui, sans-serif;
-  background: #1a1a1e;
-  color: #e8e8ea;
-}
-
-main {
-  padding: 1.25rem 1.5rem;
-}
-
-header {
-  display: flex;
-  align-items: baseline;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-h1 {
-  font-size: 1.15rem;
-  margin: 0;
-}
-
-h2 {
-  font-size: 0.95rem;
-  margin: 0;
-  color: #d0d0d8;
-}
-
-.failure {
-  margin: 0 0 0.75rem;
-  color: #ff9a9a;
-  font-size: 0.85rem;
-}
-
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
-  gap: 1.5rem;
-  align-items: start;
-}
-
-.right {
+<style scoped>
+.app {
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  min-height: 72px;
+}
+
+.titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.titles .muted {
+  font-size: 13px;
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.banner-error {
+  border-color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.banner-title {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.banner-text {
+  white-space: pre-wrap;
+  flex: 1;
   min-width: 0;
+  font-size: 13px;
+}
+
+.app-main {
+  flex: 1;
+  height: calc(100vh - 72px);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+  padding: var(--space-4);
+}
+
+.app-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.actions-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+}
+
+.app-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.empty-state ol {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--muted);
+}
+
+@media (max-width: 960px) {
+  .app-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>
