@@ -26,7 +26,7 @@ fn main() {
     if !args.is_empty() {
         if args.len() != 2 || args[0] != "--preset" {
             eprintln!(
-                "Usage: buildings-generator [--preset rectangular|l-shaped|annex|apartment|skyscraper]"
+                "Usage: buildings-generator [--preset rectangular|l-shaped|annex|apartment|multi-entrance|skyscraper|hangar|garage|barn]"
             );
             std::process::exit(2);
         }
@@ -35,7 +35,11 @@ fn main() {
             "l-shaped" => BuildingPreset::LShaped,
             "annex" => BuildingPreset::WithAnnex,
             "apartment" => BuildingPreset::ApartmentBlock,
+            "multi-entrance" => BuildingPreset::MultiEntranceApartment,
             "skyscraper" => BuildingPreset::Skyscraper,
+            "hangar" => BuildingPreset::Hangar,
+            "garage" => BuildingPreset::Garage,
+            "barn" => BuildingPreset::Barn,
             _ => {
                 eprintln!("Unknown preset: {}", args[1]);
                 std::process::exit(2);

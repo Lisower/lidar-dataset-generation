@@ -28,7 +28,11 @@ fn building_id(preset: BuildingPreset) -> &'static str {
         BuildingPreset::LShaped => "l-shaped",
         BuildingPreset::WithAnnex => "annex",
         BuildingPreset::ApartmentBlock => "apartment-block",
+        BuildingPreset::MultiEntranceApartment => "multi-entrance",
         BuildingPreset::Skyscraper => "skyscraper",
+        BuildingPreset::Hangar => "hangar",
+        BuildingPreset::Garage => "garage",
+        BuildingPreset::Barn => "barn",
     }
 }
 
@@ -36,8 +40,13 @@ fn building_id(preset: BuildingPreset) -> &'static str {
 /// `multi-storey` (многоэтажки).
 fn preset_group(preset: BuildingPreset) -> &'static str {
     match preset {
-        BuildingPreset::ApartmentBlock | BuildingPreset::Skyscraper => "multi-storey",
-        BuildingPreset::Rectangular | BuildingPreset::LShaped | BuildingPreset::WithAnnex => "houses",
+        BuildingPreset::Hangar | BuildingPreset::Garage | BuildingPreset::Barn => "outbuildings",
+        BuildingPreset::ApartmentBlock
+        | BuildingPreset::MultiEntranceApartment
+        | BuildingPreset::Skyscraper => "multi-storey",
+        BuildingPreset::Rectangular | BuildingPreset::LShaped | BuildingPreset::WithAnnex => {
+            "houses"
+        }
     }
 }
 
@@ -47,7 +56,14 @@ fn building_name(preset: BuildingPreset) -> &'static str {
 }
 
 /// Записать один пресет категории (в манифест добавляется `kind`).
-fn write_preset(category: &str, rel: &str, name: &str, description: &str, kind: &str, config: &str) {
+fn write_preset(
+    category: &str,
+    rel: &str,
+    name: &str,
+    description: &str,
+    kind: &str,
+    config: &str,
+) {
     let dir = presets_root().join(category).join(rel);
     fs::create_dir_all(&dir).expect("create preset dir");
     let manifest = format!(
@@ -90,16 +106,30 @@ fn main() {
     cabin.max_floors = 1;
     cabin.roof_pitch_min = 24.0;
     cabin.roof_pitch_max = 42.0;
-    let text = ron::ser::to_string_pretty(&cabin, Default::default())
-        .expect("serialize cabin config");
-    write_preset("buildings", "houses/cabin", "Лесная избушка", "Одноэтажный домик с крутой крышей", "cabin", &text);
+    let text =
+        ron::ser::to_string_pretty(&cabin, Default::default()).expect("serialize cabin config");
+    write_preset(
+        "buildings",
+        "houses/cabin",
+        "Лесная избушка",
+        "Одноэтажный домик с крутой крышей",
+        "cabin",
+        &text,
+    );
 
     let mut cottage = with_preset(BuildingPreset::WithAnnex);
     cottage.min_size = 5.0;
     cottage.max_size = 9.0;
     cottage.min_floors = 1;
     cottage.max_floors = 2;
-    let text = ron::ser::to_string_pretty(&cottage, Default::default())
-        .expect("serialize cottage config");
-    write_preset("buildings", "houses/cottage", "Дом с пристройкой", "Сельский дом с пристройкой", "cottage", &text);
+    let text =
+        ron::ser::to_string_pretty(&cottage, Default::default()).expect("serialize cottage config");
+    write_preset(
+        "buildings",
+        "houses/cottage",
+        "Дом с пристройкой",
+        "Сельский дом с пристройкой",
+        "cottage",
+        &text,
+    );
 }

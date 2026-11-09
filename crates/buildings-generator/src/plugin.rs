@@ -304,6 +304,9 @@ fn update_info(
         building.config.preset.label()
     ));
     lines.push(format!("Здание · seed {}", building.seed));
+    if building.config.preset.is_tall() {
+        lines.push(format!("Подъездов: {}", building.entrance_count));
+    }
     lines.push(format!(
         "Размеры {:.1} × {:.1} м · {} · высота стен {:.1} м",
         building.size.x,
