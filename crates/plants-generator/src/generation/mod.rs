@@ -8,13 +8,16 @@
 pub mod config;
 pub mod foliage;
 pub mod grass;
+pub mod instances;
 pub mod part;
 pub mod plant;
 pub mod preset;
 pub mod scene;
 pub mod skeleton;
 
-pub use config::{BranchGen, BranchLevels, FoliageConfig, GenerationMode, PlantConfig, PlantPreset, PlantType};
+pub use config::{
+    BranchGen, BranchLevels, FoliageConfig, GenerationMode, PlantConfig, PlantPreset, PlantType,
+};
 pub use grass::{GrassTuft, PlacedTuft, generate_field, generate_tuft};
 pub use part::Part;
 pub use plant::Plant;

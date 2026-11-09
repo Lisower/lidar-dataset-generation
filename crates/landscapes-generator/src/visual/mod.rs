@@ -52,6 +52,17 @@ pub fn spawn_landscape(
     materials: &mut Assets<StandardMaterial>,
     landscape: &Landscape,
 ) -> SpawnedLandscape {
+    spawn_landscape_with_ground_color(commands, meshes, materials, landscape, GROUND_COLOR)
+}
+
+/// Reuse the existing terrain mesh with a scene-selected soil material.
+pub fn spawn_landscape_with_ground_color(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    landscape: &Landscape,
+    ground_color: Color,
+) -> SpawnedLandscape {
     let mut entities = Vec::new();
 
     let root = commands
@@ -67,7 +78,7 @@ pub fn spawn_landscape(
 
     // --- меш рельефа (визуальный режим) ---
     let ground_mesh = meshes.add(terrain_mesh(&landscape.heightfield));
-    let ground_material = materials.add(material(GROUND_COLOR));
+    let ground_material = materials.add(material(ground_color));
     let ground = commands
         .spawn((
             Mesh3d(ground_mesh),

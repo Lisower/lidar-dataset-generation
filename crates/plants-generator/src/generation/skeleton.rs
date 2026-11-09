@@ -517,6 +517,7 @@ impl PlantSkeleton {
                 let horizontal_length =
                     (branch_length * branch_length
                         - branch_height * branch_height)
+                        .max(0.0)
                         .sqrt();
 
                 let h = azimuth.to_radians();

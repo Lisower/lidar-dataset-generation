@@ -1,7 +1,7 @@
 //! Composition only: reuses the team's existing Bevy camera, controls and renderers.
 //! No custom terrain, plant, building or point-cloud renderer is implemented here.
 
-use std::collections::BTreeMap;
+use rand::RngExt;
 use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
@@ -16,19 +16,23 @@ use generation_core::seeds::GlobalSeed;
 use generation_core::{Seed, ViewMode};
 use landscapes_generator::visual::{
     PointCloudEntity as LandscapeCloud, VisualMesh as LandscapeMesh, spawn_landscape,
+    spawn_landscape_with_ground_color,
 };
 use plants_generator::visual::{
-    PointCloudEntity as PlantCloud, VisualMesh as PlantMesh, spawn_plant_scene,
+    PointCloudEntity as PlantCloud, VisualMesh as PlantMesh, spawn_grass_instances,
+    spawn_plant_scene,
 };
-use plants_generator::{GenerationMode, PlacedPlant, PlacedTuft, PlantPreset, PlantScene};
-use terrains_generator::{TerrainPreset, TerrainPresetData, TerrainScene, generate, generate_from_data};
+use plants_generator::{GenerationMode, PlacedPlant, PlantPreset, PlantScene};
+use terrains_generator::{
+    TerrainPreset, TerrainPresetData, TerrainScene, generate, try_generate_from_data,
+};
 
 /// Подсказка об управлении.
 const HELP: &str =
     "[Ctrl+S] пресеты  ·  [V] вид  ·  [R] новый вид  ·  [Shift+R] тот же вид  ·  [Tab] камера";
 
 #[derive(Resource)]
-struct SelectedPreset(TerrainPreset);
+struct SelectedPreset(TerrainPreset, Option<String>);
 
 #[derive(Default, Resource)]
 struct TerrainViewerState {
@@ -37,6 +41,9 @@ struct TerrainViewerState {
     scene: Option<TerrainScene>,
     /// Русское название текущего пресета из манифеста.
     preset_name: String,
+    preset_id: String,
+    error: Option<String>,
+    selection: Vec<String>,
 }
 
 /// Маркер текстовой панели информации о территории.
@@ -45,11 +52,12 @@ struct TerrainInfoText;
 
 pub struct TerrainViewerPlugin {
     pub initial_preset: TerrainPreset,
+    pub initial_id: Option<String>,
 }
 
 impl Plugin for TerrainViewerPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(SelectedPreset(self.initial_preset))
+        app.insert_resource(SelectedPreset(self.initial_preset, self.initial_id.clone()))
             .init_resource::<TerrainViewerState>()
             .add_systems(Startup, setup)
             .add_systems(Update, (regenerate, update_info, apply_view_mode).chain());
@@ -65,6 +73,7 @@ fn setup(
     preset: Res<SelectedPreset>,
     store: Option<Res<PresetStore>>,
     mut state: ResMut<TerrainViewerState>,
+    mut orbit: Option<ResMut<OrbitCamera>>,
 ) {
     // Same daylight configuration as the project's landscape viewer.
     commands.spawn((
@@ -101,9 +110,8 @@ fn setup(
         seed.0,
         store.as_deref(),
         &mut state,
-        // При первом запуске сохраняем обзорный ракурс камеры; подстраиваем
-        // расстояние только при перегенерации (R / выбор пресета).
-        None,
+        orbit.as_deref_mut(),
+        preset.1.as_deref(),
     );
 }
 
@@ -131,9 +139,6 @@ fn regenerate(
         return;
     }
 
-    if let Some(old_root) = state.root.take() {
-        commands.entity(old_root).despawn();
-    }
     build_scene(
         &mut commands,
         &mut meshes,
@@ -143,6 +148,7 @@ fn regenerate(
         store.as_deref(),
         &mut state,
         orbit.as_deref_mut(),
+        None,
     );
 }
 
@@ -151,22 +157,54 @@ fn scene_from(
     preset: TerrainPreset,
     seed: Seed,
     store: Option<&PresetStore>,
-) -> (TerrainScene, String) {
+    initial: bool,
+    previous_id: Option<&str>,
+    initial_id: Option<&str>,
+) -> Result<(TerrainScene, String, String), String> {
     if let Some(store) = store {
-        // Демонстрация: истинно случайный пресет из выбранных.
-        if let Some(meta) = store.random() {
-            if let Some(data) = load_preset_config::<TerrainPresetData>(meta) {
-                // Корень каталога пресетов = родитель папки категории.
-                let presets_root = store.root.parent().unwrap_or(&store.root);
-                let scene = generate_from_data(&data, seed, Some(presets_root));
-                // В отображаемом имени — русское название из манифеста, а не
-                // технический id пресета (`data.name`), который используется
-                // только для обратного поиска архетипа.
-                return (scene, meta.name.clone());
-            }
+        let mut choices: Vec<_> = store
+            .presets
+            .iter()
+            .filter(|p| store.selected.contains(&p.id))
+            .collect();
+        choices.sort_by(|a, b| a.id.cmp(&b.id));
+        if choices.is_empty() {
+            return Err("Выберите пресеты территории (Ctrl+S)".into());
         }
+        let index = seed
+            .with_label("terrain-choice")
+            .rng()
+            .random_range(0..choices.len());
+        let meta = if let Some(id) = previous_id {
+            store
+                .presets
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap_or(choices[index])
+        } else if initial {
+            store
+                .presets
+                .iter()
+                .find(|p| Some(p.id.as_str()) == initial_id)
+                .or_else(|| choices.iter().copied().find(|p| p.kind == preset.name()))
+                .unwrap_or(choices[index])
+        } else {
+            choices[index]
+        };
+        let data = load_preset_config::<TerrainPresetData>(meta)
+            .ok_or_else(|| format!("Не удалось загрузить {}", meta.config_path.display()))?;
+        let root = store.root.parent().unwrap_or(&store.root);
+        return Ok((
+            try_generate_from_data(&data, seed, Some(root))?,
+            meta.name.clone(),
+            meta.id.clone(),
+        ));
     }
-    (generate(preset, seed), preset.label().to_string())
+    Ok((
+        generate(preset, seed),
+        preset.label().to_string(),
+        preset.name().to_string(),
+    ))
 }
 
 /// Панель информации в левом верхнем углу.
@@ -209,6 +247,10 @@ fn update_info(
     let Ok(mut text) = text.single_mut() else {
         return;
     };
+    if let Some(error) = &state.error {
+        text.0 = format!("Ошибка конфигурации: {error}\n{HELP}");
+        return;
+    }
     let Some(scene) = &state.scene else {
         return;
     };
@@ -258,6 +300,11 @@ fn update_info(
         landscape.water_cloud.points.len()
     ));
 
+    lines.push(format!(
+        "Ландшафт: {} · генерация {:.0} мс",
+        scene.landscape_name,
+        scene.generation_time.as_secs_f64() * 1000.0
+    ));
     lines.push(String::new());
     lines.push(HELP.to_string());
     lines.push(format!("Режим вида: {}", view_mode.label()));
@@ -274,16 +321,60 @@ fn build_scene(
     store: Option<&PresetStore>,
     state: &mut TerrainViewerState,
     orbit: Option<&mut OrbitCamera>,
+    initial_id: Option<&str>,
 ) {
-    let (scene, preset_name) = scene_from(preset, seed, store);
+    let selection: Vec<_> = store
+        .map(|s| s.selected.iter().cloned().collect())
+        .unwrap_or_default();
+    let previous_id = if state.scene.as_ref().is_some_and(|scene| scene.seed == seed)
+        && selection == state.selection
+    {
+        Some(state.preset_id.as_str())
+    } else {
+        None
+    };
+    let (scene, preset_name, preset_id) = match scene_from(
+        preset,
+        seed,
+        store,
+        state.scene.is_none(),
+        previous_id,
+        initial_id,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            error!("{error}");
+            state.error = Some(error);
+            return;
+        }
+    };
+    state.error = None;
+    state.selection = selection;
+    if let Some(old_root) = state.root.take() {
+        commands.entity(old_root).despawn();
+    }
 
     if let Some(orbit) = orbit {
         // Та же посадка камеры, что и в генераторе ландшафтов: расстояние до
         // стометровой карты и наклон взгляда должны совпадать, чтобы после
         // перегенерации территория выглядела привычно.
         let mid = (scene.landscape.min_height + scene.landscape.max_height) * 0.5;
-        orbit.focus = Vec3::new(0.0, mid.clamp(-20.0, 60.0) * 0.6, 0.0);
-        orbit.radius = map_overview_radius(scene.landscape.heightfield.size_m);
+        let skyline = scene
+            .buildings
+            .iter()
+            .map(|p| p.position.z + p.building.size.z)
+            .fold(scene.landscape.max_height, f32::max);
+        let rise = (skyline - scene.landscape.min_height).max(0.0);
+        orbit.focus = Vec3::new(
+            0.0,
+            if rise > 50.0 {
+                scene.landscape.min_height + rise * 0.5
+            } else {
+                mid.clamp(-20.0, 60.0) * 0.6
+            },
+            0.0,
+        );
+        orbit.radius = map_overview_radius(scene.landscape.heightfield.size_m).max(rise * 2.2);
         orbit.pitch = 0.58;
     }
 
@@ -296,7 +387,17 @@ fn build_scene(
         .id();
 
     // Use the existing renderer for soil, water, waterfalls and point clouds.
-    let ground = spawn_landscape(commands, meshes, materials, &scene.landscape);
+    let ground = if scene.sandy_ground {
+        spawn_landscape_with_ground_color(
+            commands,
+            meshes,
+            materials,
+            &scene.landscape,
+            Color::srgb(0.76, 0.67, 0.44),
+        )
+    } else {
+        spawn_landscape(commands, meshes, materials, &scene.landscape)
+    };
     commands.entity(root).add_child(ground.root);
 
     for tree in &scene.trees {
@@ -322,45 +423,8 @@ fn build_scene(
         );
     }
 
-    // Existing grass renderer batches tufts into one mesh. Bucket by 0.5 m
-    // elevation so that groups follow the ground approximately. Exact draping
-    // of every tuft can be added to the shared renderer in a later iteration.
-    let mut grass_bands: BTreeMap<i32, Vec<PlacedTuft>> = BTreeMap::new();
-    for tuft in &scene.grass {
-        let ground_y = scene
-            .landscape
-            .heightfield
-            .height_at(tuft.position.x, tuft.position.y);
-        let band = (ground_y / 0.5).round() as i32;
-        grass_bands.entry(band).or_default().push(tuft.clone());
-    }
-    for (band, tufts) in grass_bands {
-        let grass_preset = if matches!(
-            scene.preset,
-            TerrainPreset::Field | TerrainPreset::Village | TerrainPreset::Town
-        ) {
-            PlantPreset::SparseGrass
-        } else {
-            PlantPreset::TallGrass
-        };
-        let grass_scene = PlantScene {
-            mode: GenerationMode::Multiple,
-            preset: grass_preset,
-            seed,
-            plants: Vec::new(),
-            tufts,
-            extent: 50.0,
-            max_height: 1.0,
-            cloud_points: 0,
-        };
-        let spawned = spawn_plant_scene(commands, meshes, materials, &grass_scene);
-        commands.entity(spawned.root).insert(
-            Transform::from_xyz(0.0, band as f32 * 0.5, 0.0)
-                .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
-        );
-        commands.entity(root).add_child(spawned.root);
-    }
-
+    let grass = spawn_grass_instances(commands, meshes, materials, &scene.grass);
+    commands.entity(root).add_child(grass.root);
     // Buildings renderer expects the building in local Z-up coordinates.
     for placed in &scene.buildings {
         let spawned = spawn_building(commands, meshes, materials, &placed.building);
@@ -386,6 +450,7 @@ fn build_scene(
 
     state.root = Some(root);
     state.preset_name = preset_name;
+    state.preset_id = preset_id;
     state.scene = Some(scene);
 }
 
@@ -396,11 +461,11 @@ fn add_plant(
     root: Entity,
     scene: &TerrainScene,
     plant: &PlacedPlant,
-    kind: PlantPreset,
+    _kind: PlantPreset,
 ) {
     let single = PlantScene {
         mode: GenerationMode::Single,
-        preset: kind,
+        preset: plant.plant.preset,
         seed: scene.seed,
         plants: vec![plant.clone()],
         tufts: Vec::new(),

@@ -22,6 +22,64 @@ use generation_core::point_clouds::visual::spawn_point_cloud;
 
 use crate::generation::{Part, PlacedTuft, PlantScene};
 
+/// Shared handles allow Bevy's automatic mesh instancing. Only one mesh/material
+/// per variant, one combined cloud, and no per-instance geometry allocations.
+/// All instances use exact ground elevations (no height bands).
+pub fn spawn_grass_instances(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    field: &crate::generation::instances::GrassField,
+) -> SpawnedPlants {
+    let root = commands
+        .spawn((
+            PlantsRoot,
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            Visibility::default(),
+            Name::new("трава: экземпляры"),
+        ))
+        .id();
+    let mut entities = vec![root];
+    if field.is_empty() {
+        return SpawnedPlants { root, entities };
+    }
+    let variants: Vec<_> = field
+        .variants
+        .iter()
+        .map(|tuft| {
+            (
+                meshes.add(mesh_from_polygons(&tuft.part.faces)),
+                materials.add(material_double_sided(tuft.part.color)),
+            )
+        })
+        .collect();
+    for instance in &field.instances {
+        let (mesh, material) = &variants[instance.variant];
+        let entity = commands
+            .spawn((
+                PlacedTuftMarker,
+                VisualMesh,
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(instance.position)
+                    .with_rotation(Quat::from_rotation_z(instance.rotation))
+                    .with_scale(Vec3::splat(instance.scale)),
+                Visibility::default(),
+            ))
+            .id();
+        commands.entity(root).add_child(entity);
+        entities.push(entity);
+    }
+    let cloud = field.point_cloud();
+    if !cloud.is_empty() {
+        let entity = spawn_point_cloud(commands, meshes, &cloud);
+        commands.entity(entity).insert(PointCloudEntity);
+        commands.entity(root).add_child(entity);
+        entities.push(entity);
+    }
+    SpawnedPlants { root, entities }
+}
+
 /// Маркер корневой сущности всей сцены растений.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct PlantsRoot;
