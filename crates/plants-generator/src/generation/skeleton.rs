@@ -67,6 +67,15 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::Juniper {
             return Self::build_juniper(config);
         }
+        if config.preset == PlantPreset::CactusSmall {
+            return Self::build_cactus_small(config);
+        }
+        if config.preset == PlantPreset::Yucca {
+            return Self::build_yucca(config);
+        }
+        if config.preset == PlantPreset::Agave {
+            return Self::build_agave(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -125,8 +134,9 @@ impl PlantSkeleton {
             let height = rng.random_range(10.0..=16.0);
             let trunk_radius = rng.random_range(0.28..=0.42);
 
-            // Количество ярусов ели.
-            let tiers = 18usize;
+            // Основные ярусы кроны.
+            // Верхушка строится отдельно как продолжение центральной оси.
+            let tiers = 15usize;
 
             let mut previous_trunk_point = 0usize;
 
@@ -139,8 +149,8 @@ impl PlantSkeleton {
                     rng.random_range(-0.18..=0.18);
 
                 let z =
-                    (height * t + tier_jitter)
-                        .clamp(0.5, height * 0.96);
+                    (height * t * 0.72 + tier_jitter * 0.5)
+                        .clamp(0.5, height * 0.72);
 
                 let trunk_point = skeleton.points.len();
 
@@ -160,10 +170,19 @@ impl PlantSkeleton {
 
                 // Нижние ветви длиннее, верхние короче.
                 let crown_factor = 1.0 - t;
-                let base_branch_length = 0.7 + crown_factor * 4.5;
+                let base_branch_length = match tier {
+                    15 => 0.55,
+                    14 => 0.85,
+                    13 => 1.20,
+                    _ => 0.7 + crown_factor * 4.5,
+                };
 
-                // Число основных ветвей немного различается между ярусами.
-                let branch_count = rng.random_range(6usize..=9usize);
+                let branch_count = match tier {
+                    15 => 5usize,
+                    14 => 6usize,
+                    13 => 7usize,
+                    _ => rng.random_range(7usize..=10usize),
+                };
 
                 // Каждый ярус немного поворачиваем относительно предыдущего,
                 // чтобы ветви не располагались строгими этажами.
@@ -184,9 +203,12 @@ impl PlantSkeleton {
 
                     // Нижние ветви почти горизонтальные,
                     // верхние сильнее направлены вверх.
-                    // Небольшой разброс делает форму естественнее.
-                    let vertical_deg =
-                        82.0 - t * 25.0 + rng.random_range(-6.0..=6.0);
+                    let vertical_deg = match tier {
+                        15 => rng.random_range(48.0_f32..=54.0_f32),
+                        14 => rng.random_range(52.0_f32..=58.0_f32),
+                        13 => rng.random_range(56.0_f32..=62.0_f32),
+                        _ => 82.0 - t * 25.0 + rng.random_range(-6.0..=6.0),
+                    };
 
                     let v = vertical_deg.to_radians();
                     let h = azimuth.to_radians();
@@ -312,9 +334,305 @@ impl PlantSkeleton {
                 previous_trunk_point = trunk_point;
             }
 
+            // Верхняя часть ели: центральная ось продолжается несколькими
+            // короткими сегментами, а боковые ветви постепенно уменьшаются.
+            // Так макушка плавно сужается, а не образует отдельные ярусы.
+            let top_levels = 4usize;
+
+            for top_level in 1..=top_levels {
+                let progress = top_level as f32 / top_levels as f32;
+
+                let from = previous_trunk_point;
+                let start_position = skeleton.points[from].position;
+
+                // К вершине сегменты центральной оси становятся немного короче.
+                let trunk_step = 0.22 - progress * 0.04;
+
+                let trunk_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: start_position + Vec3::new(0.0, 0.0, trunk_step),
+                    level: tiers + top_level,
+                    branch_id: 0,
+                    radius: trunk_radius * (0.16 - progress * 0.10),
+                    taper: 0.65,
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from,
+                    to: trunk_idx,
+                });
+
+                // На последнем уровне остаётся только терминальный
+                // центральный побег — сама макушка.
+                let branch_count = match top_level {
+                    1 => 6usize,
+                    2 => 5usize,
+                    3 => 4usize,
+                    _ => 0usize,
+                };
+
+                let branch_length = match top_level {
+                    1 => 0.55,
+                    2 => 0.38,
+                    3 => 0.22,
+                    _ => 0.0,
+                };
+
+                let tier_offset =
+                    top_level as f32 * 31.0 + rng.random_range(-10.0..=10.0);
+
+                for branch_index in 0..branch_count {
+                    let azimuth =
+                        tier_offset
+                            + branch_index as f32 * (360.0 / branch_count as f32)
+                            + rng.random_range(-8.0..=8.0);
+
+                    // Верхние ветви направлены вверх и наружу.
+                    let vertical_deg: f32 =
+                        rng.random_range(48.0..=60.0);
+
+                    let v = vertical_deg.to_radians();
+                    let h = azimuth.to_radians();
+
+                    let direction = Vec3::new(
+                        v.sin() * h.cos(),
+                        v.sin() * h.sin(),
+                        v.cos(),
+                    );
+
+                    let length =
+                        branch_length * rng.random_range(0.88..=1.08);
+
+                    let branch_idx = skeleton.points.len();
+
+                    skeleton.points.push(SkeletonPoint {
+                        position:
+                            skeleton.points[trunk_idx].position
+                                + direction * length,
+                        level: tiers + top_level,
+                        branch_id: branch_index + 1,
+                        radius: 0.025,
+                        taper: 0.65,
+                        children_count: 0,
+                    });
+
+                    skeleton.segments.push(SkeletonSegment {
+                        from: trunk_idx,
+                        to: branch_idx,
+                    });
+                }
+
+                // Центральная ось продолжается до следующего уровня.
+                // На последнем уровне она становится терминальной.
+                skeleton.points[trunk_idx].children_count =
+                    if top_level < top_levels {
+                        branch_count + 1
+                    } else {
+                        branch_count
+                    };
+
+                previous_trunk_point = trunk_idx;
+            }     
+            
             Self::finish(&mut skeleton);
             skeleton
         }
+
+        /// Специальное построение маленького кустового кактуса:
+        /// несколько толстых ребристых побегов растут отдельной группой от земли.
+        fn build_cactus_small(config: &PlantConfig) -> Self {
+            let mut rng = config.seed.with_label("cactus_small_skeleton").rng();
+            let mut skeleton = Self::default();
+
+            // Служебная центральная точка растения.
+            skeleton.points.push(SkeletonPoint {
+                position: Vec3::ZERO,
+                level: 0,
+                branch_id: 0,
+                radius: 0.0,
+                taper: 1.0,
+                children_count: 0,
+            });
+
+            // Количество отдельных мясистых побегов меняется от seed.
+            let shoot_count = rng.random_range(6usize..=9usize);
+
+            for shoot_index in 0..shoot_count {
+                if skeleton.points.len() >= config.max_branches {
+                    break;
+                }
+
+                // Центральные побеги располагаются ближе к середине,
+                // остальные образуют вокруг них компактную группу.
+                let base_radius = if shoot_index < 2 {
+                    rng.random_range(0.0_f32..=0.07_f32)
+                } else {
+                    rng.random_range(0.22_f32..=0.40_f32)
+                };
+
+                let base_angle =
+                    shoot_index as f32 * (std::f32::consts::TAU / shoot_count as f32)
+                        + rng.random_range(0.08_f32..=0.18_f32);
+
+                let start_position = Vec3::new(
+                    base_radius * base_angle.cos(),
+                    base_radius * base_angle.sin(),
+                    0.0,
+                );
+
+                // Центральные побеги выше, наружные немного короче.
+                let height = if shoot_index < 2 {
+                    rng.random_range(0.95_f32..=1.30_f32)
+                } else {
+                    rng.random_range(0.55_f32..=1.05_f32)
+                };
+
+                // Небольшой наклон наружу делает куст естественнее,
+                // но побеги остаются преимущественно вертикальными.
+                let lean = if shoot_index < 2 {
+                    rng.random_range(0.0_f32..=0.04_f32)
+                } else {
+                    rng.random_range(0.08_f32..=0.18_f32)
+                };
+
+                let lean_angle =
+                    base_angle + rng.random_range(-0.25_f32..=0.25_f32);
+
+                let horizontal = height * lean;
+
+                let end_position = Vec3::new(
+                    start_position.x + horizontal * lean_angle.cos(),
+                    start_position.y + horizontal * lean_angle.sin(),
+                    height,
+                );
+
+                // Немного различаем толщину отдельных побегов.
+                let radius = if shoot_index < 2 {
+                    rng.random_range(0.14_f32..=0.18_f32)
+                } else {
+                    rng.random_range(0.10_f32..=0.16_f32)
+                };
+
+                // Отдельная точка основания нужна, чтобы побеги действительно
+                // начинались в разных местах, а не сходились в один центр.
+                let base_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: start_position,
+                    level: 0,
+                    branch_id: shoot_index,
+                    radius,
+                    taper: 0.92,
+                    children_count: 1,
+                });
+
+                let end_idx = skeleton.points.len();
+
+                skeleton.points.push(SkeletonPoint {
+                    position: end_position,
+                    level: 0,
+                    branch_id: shoot_index,
+                    radius,
+                    taper: rng.random_range(0.86_f32..=0.93_f32),
+                    children_count: 0,
+                });
+
+                skeleton.segments.push(SkeletonSegment {
+                    from: base_idx,
+                    to: end_idx,
+                });
+            }
+
+            skeleton.points[0].children_count = shoot_count;
+
+            Self::finish(&mut skeleton);
+            skeleton
+        }
+
+        fn build_yucca(config: &PlantConfig) -> Self {
+        let mut rng: StdRng = config.seed.with_label("yucca_skeleton").rng();
+        let mut skeleton: PlantSkeleton = Self::default();
+
+        // Основание ствола.
+        skeleton.points.push(SkeletonPoint {
+            position: Vec3::ZERO,
+            level: 0,
+            branch_id: 0,
+            radius: rng.random_range(0.23_f32..=0.29_f32),
+            taper: 1.0,
+            children_count: 1,
+        });
+
+        // Верхушка короткого древесного ствола.
+        let trunk_height = rng.random_range(0.65_f32..=0.90_f32);
+        let top_idx = skeleton.points.len();
+
+        skeleton.points.push(SkeletonPoint {
+            position: Vec3::new(0.0, 0.0, trunk_height),
+            level: 0,
+            branch_id: 0,
+            radius: skeleton.points[0].radius * 0.48,
+            taper: 0.48,
+            children_count: 0,
+        });
+
+        skeleton.segments.push(SkeletonSegment {
+            from: 0,
+            to: top_idx,
+        });
+
+        Self::finish(&mut skeleton);
+        skeleton
+    }
+
+    fn build_agave(config: &PlantConfig) -> Self {
+    let mut rng = config.seed.with_label("agave_skeleton").rng();
+
+    let mut skeleton = Self {
+        points: Vec::new(),
+        segments: Vec::new(),
+        height: 0.0,
+        ground_radius: 0.0,
+    };
+
+    // Агава растёт непосредственно от земли.
+    // Небольшой центральный сегмент нужен только как точка,
+    // от которой будет строиться прикорневая розетка листьев.
+    let base_radius = rng.random_range(0.10_f32..=0.14_f32);
+    let center_height = rng.random_range(0.035_f32..=0.055_f32);
+
+    skeleton.points.push(SkeletonPoint {
+        position: Vec3::ZERO,
+        radius: base_radius,
+        taper: 1.0,
+        level: 0,
+        branch_id: 0,
+        children_count: 0,
+    });
+
+    skeleton.points.push(SkeletonPoint {
+        position: Vec3::Z * center_height,
+        radius: base_radius * 0.85,
+        taper: 0.85,
+        level: 0,
+        branch_id: 0,
+        children_count: 0,
+    });
+
+    skeleton.segments.push(SkeletonSegment {
+        from: 0,
+        to: 1,
+    });
+
+    // Размеры учитывают прикорневую розетку агавы, а не только
+    // технический центральный сегмент скелета.
+    skeleton.height = 0.75;
+    skeleton.ground_radius = 0.95;
+
+    skeleton
+}
 
         /// Специальное построение можжевельника:
         /// низкий раскидистый куст с несколькими основными побегами
@@ -519,7 +837,7 @@ impl PlantSkeleton {
                         - branch_height * branch_height)
                         .max(0.0)
                         .sqrt();
-
+                    
                 let h = azimuth.to_radians();
 
                 let end_position = Vec3::new(
