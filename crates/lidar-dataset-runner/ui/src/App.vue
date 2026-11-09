@@ -195,7 +195,10 @@ onUnmounted(() => {
       <StatusPill :state="state" />
     </header>
 
-    <p v-if="failure" class="failure">Ошибка запуска: {{ failure }}</p>
+    <div v-if="failure" class="banner banner-error">
+      <p class="banner-title">Запуск прерван: {{ failure }}</p>
+      <button type="button" class="btn btn-ghost" @click="failure = ''">Скрыть</button>
+    </div>
 
     <div class="layout">
       <RecipeForm
