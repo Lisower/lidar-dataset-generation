@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { FolderOpen } from "lucide-vue-next";
 import FieldHint from "./FieldHint.vue";
+import ValidationSummary from "./ValidationSummary.vue";
 import PresetSelect from "./PresetSelect.vue";
 import type {
   Catalog,
@@ -120,10 +121,44 @@ function elementIssue(kind: ElementKind, suffix: "presetId" | "count"): string |
 function setOutput(event: Event) {
   emit("update:outputDir", (event.target as HTMLInputElement).value);
 }
+
+function fieldIdFor(field: string): string {
+  if (field === "scenes" || field === "seed" || field === "maxSlopeDeg" || field === "landscape") {
+    const map: Record<string, string> = {
+      scenes: "field-scenes",
+      seed: "field-seed",
+      maxSlopeDeg: "field-slope",
+      landscape: "field-landscape",
+    };
+    return map[field];
+  }
+  if (field === "outputDir") {
+    return "field-output";
+  }
+  if (field === "elements") {
+    return "field-element-building";
+  }
+  const match = /^elements\[(\d+)\](?:\.(\w+))?$/.exec(field);
+  if (match) {
+    const element = recipes.value.elements[Number(match[1])];
+    if (element) {
+      return match[2] === "count"
+        ? `field-element-${element.kind}-count`
+        : `field-element-${element.kind}`;
+    }
+  }
+  return field;
+}
+
+function focusField(field: string) {
+  document.getElementById(fieldIdFor(field))?.focus();
+}
 </script>
 
 <template>
   <form class="form" @submit.prevent>
+    <ValidationSummary :issues="issues" @focus-field="focusField" />
+
     <fieldset class="card group">
       <legend>Сцена</legend>
 
@@ -220,9 +255,11 @@ function setOutput(event: Event) {
         <FieldHint
           :id="`hint-element-${kind}`"
           text="0 означает, что объекты этого вида не ставятся"
-          :error="elementIssue(kind, 'presetId') ?? elementIssue(kind, 'count') ?? issueFor('elements')"
+          :error="elementIssue(kind, 'presetId') ?? elementIssue(kind, 'count')"
         />
       </div>
+
+      <FieldHint id="hint-elements" text="" :error="issueFor('elements')" />
 
       <p class="note muted">{{ PLACEMENT_NOTE }}</p>
     </fieldset>
