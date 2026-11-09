@@ -2,8 +2,10 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import RecipeForm from "./components/RecipeForm.vue";
+import StatusPill from "./components/StatusPill.vue";
 import RunProgress from "./components/RunProgress.vue";
 import StatsTable from "./components/StatsTable.vue";
+import { type RunState } from "./lib/labels";
 import {
   cancelGeneration,
   getCatalog,
@@ -21,8 +23,6 @@ import {
   type UnlistenFn,
   type ValidationIssue,
 } from "./api";
-
-type RunState = "idle" | "running" | "finished" | "failed" | "cancelled";
 
 const state = ref<RunState>("idle");
 const catalog = ref<Catalog>({ landscapes: [], buildings: [], plants: [] });
@@ -140,7 +140,7 @@ onUnmounted(() => {
   <main>
     <header>
       <h1>LiDAR Dataset Runner</h1>
-      <span class="state" :data-state="state">{{ state }}</span>
+      <StatusPill :state="state" />
     </header>
 
     <p v-if="failure" class="failure">Ошибка запуска: {{ failure }}</p>
@@ -201,24 +201,6 @@ h2 {
   font-size: 0.95rem;
   margin: 0;
   color: #d0d0d8;
-}
-
-.state {
-  font-size: 0.75rem;
-  color: #8a8a94;
-  border: 1px solid #33333c;
-  border-radius: 999px;
-  padding: 0.1rem 0.55rem;
-}
-
-.state[data-state="running"] {
-  color: #8fb4ff;
-  border-color: #2d5cbf;
-}
-
-.state[data-state="failed"] {
-  color: #ff9a9a;
-  border-color: #5c2d2d;
 }
 
 .failure {
