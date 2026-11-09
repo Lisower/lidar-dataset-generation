@@ -7,83 +7,176 @@
 Вся генерация **детерминирована от seed**: одинаковые пресет и seed всегда дают
 одинаковый результат, вплоть до облака точек.
 
-## Что можно запустить
+## Быстрый старт
 
-| Приложение | Что делает |
-| --- | --- |
-| `landscapes-generator` | базовый рельеф: грунт, вода, водопады |
-| `buildings-generator` | дома, многоквартирные здания, небоскрёбы |
-| `plants-generator` | деревья, кусты, трава |
-| `terrains-generator` | территория 100×100 м: ландшафт + здания + растения |
-| `lidar-simulator` | сканирование сцены LiDAR-сканером |
-| `lidar-dataset-runner` | приложение для массовой генерации датасетов |
+Всё делается из **корня репозитория**. Переходить в каталоги крейтов не нужно:
+пути к пресетам и шрифтам приложение вычисляет от каталога своего крейта, а не
+от текущего каталога терминала.
+
+### 1. Поставить Rust
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+sh /tmp/rustup-init.sh -y
+source "$HOME/.cargo/env"
+cargo --version      # нужно 1.97.1 или новее
+```
+
+Если `cargo` уже стоит, проверьте версию. Системный `cargo` из репозитория
+Ubuntu слишком старый, нужен именно `rustup`.
+
+### 2. Поставить системные библиотеки (один раз)
+
+Ubuntu / Debian:
+
+```sh
+sudo apt update
+sudo apt install build-essential pkg-config curl libx11-dev libasound2-dev \
+  libudev-dev libxkbcommon-x11-0 libwayland-dev libxkbcommon-dev
+```
+
+Для Intel/AMD без Vulkan-драйвера: `sudo apt install mesa-vulkan-drivers`.
+Для NVIDIA нужен подходящий драйвер NVIDIA. Подробности в разделе «Установка».
+
+### 3. Запустить приложение
 
 ```sh
 cargo run -p landscapes-generator
-cargo run -p buildings-generator            # -- --preset rectangular|l-shaped|annex|apartment|skyscraper
-cargo run -p plants-generator
-cargo run -p terrains-generator             # [пресет] [seed], например: village 42
-cargo run -p terrains-generator -- --list   # список пресетов территории
-cargo run -p lidar-simulator
 ```
 
-`lidar-simulator` умеет сохранять скан без окна:
+**Первый запуск собирает Bevy и идёт десятки минут**, `target/` вырастает до
+десятков гигабайт. Это нормально и происходит один раз, дальше окно открывается
+за секунды. Первые секунды после открытия окна тоже уходят на компиляцию
+шейдеров.
+
+Что должно появиться: окно с рельефом и надписью о сгенерированном ландшафте в
+терминале:
+
+```
+landscapes_generator::plugin: Ландшафт сгенерирован: равнина, seed = 12648430
+```
+
+Если окно не появилось, смотрите «Если не запускается».
+
+Окно закрывается крестиком или `Alt+F4`; если запуск в терминале подвис —
+`Ctrl+C` в нём.
+
+### 4. Остальные приложения
+
+Тот же принцип: одна команда из корня репозитория, своё окно на каждое.
+
+| Приложение | Что увидите |
+| --- | --- |
+| ландшафты | рельеф, грунт и вода |
+| здания | одно здание; пресет задаётся флагом |
+| растения | дерево, куст или трава; `M` меняет вид |
+| территории | участок 100×100 м с застройкой и растительностью |
+| симулятор | здание и его скан с LiDAR-сканера |
+| раннер датасетов | выбор пресетов и запуск генерации датасета |
+
+Их команды:
+
+```sh
+cargo run -p buildings-generator
+cargo run -p plants-generator
+cargo run -p terrains-generator
+cargo run -p lidar-simulator
+cargo run -p lidar-dataset-runner
+```
+
+Дополнительные аргументы:
+
+```sh
+# пресет здания: rectangular, l-shaped, annex, apartment, skyscraper
+cargo run -p buildings-generator -- --preset apartment
+
+cargo run -p terrains-generator -- --list        # названия территорий
+cargo run -p terrains-generator -- village 42    # территория и seed
+cargo run -p lidar-simulator -- --help           # все флаги симулятора
+```
+
+`terrains-generator` принимает аргументы позиционно (`[пресет] [seed]`), у
+остальных генераторов пресеты выбираются в окне `Ctrl+S`.
+
+### 5. Скан без окна
+
+Симулятор умеет сохранять облако точек в файл, графическая сессия не нужна:
 
 ```sh
 cargo run -p lidar-simulator -- --headless --frames 72 --seed 12648430 \
   --output assets/export/building-scan.ply
-cargo run -p lidar-simulator -- --help
 ```
 
-Раннер датасетов — отдельное приложение; интерфейс собирается отдельно:
+В консоли появятся число кадров и количество точек, а по указанному пути
+окажется PLY с классами точек:
+
+```
+Кадров: 4, исходных точек: 134777, увидено: 18117, итог с Low Noise: 18547.
+```
+
+Каталог `assets/export/` создаётся сам, в Git он не попадает.
+
+### 6. Раннер датасетов
+
+У раннера есть веб-интерфейс, его нужно собрать отдельно, иначе окно покажет
+заглушку «ui не собран». Нужен **Node.js 20**:
 
 ```sh
 cd crates/lidar-dataset-runner/ui && npm install && npm run build && cd -
 cargo run -p lidar-dataset-runner
 ```
 
-Для разработки интерфейса: `npm run dev` в `crates/lidar-dataset-runner/ui` и
-параллельно `cargo run -p lidar-dataset-runner`.
+Готовый `.deb` и `.AppImage` ставятся без Node и без Rust, см. «Установка
+раннера датасетов». Для правки интерфейса: `npm run dev` в
+`crates/lidar-dataset-runner/ui` и параллельно `cargo run -p
+lidar-dataset-runner`.
+
+## Если не запускается
+
+| Что видите | Причина | Что делать |
+| --- | --- | --- |
+| `error: no such command: xtask` | запуск не из корня репозитория | `cd` в корень, там `.cargo/config.toml` |
+| `failed to run custom build command` / нет `pkg-config` | нет системных библиотек | шаг 2 быстрого старта |
+| `Failed to build event loop: ... neither WAYLAND_DISPLAY nor ... DISPLAY is set` | нет графической сессии (SSH, headless) | запускать с рабочего стола; без окна работает только `--headless` симулятора |
+| `cargo --version` ниже 1.97.1 | старый Rust | `source "$HOME/.cargo/env"`, `hash -r`; при системе с `cargo` из apt — поставить rustup |
+| окно открылось, но текста нет | не нашёлся шрифт | запускать из корня репозитория либо задать `LIDAR_ASSETS_DIR` |
+| окно раннера: «ui не собран» | фронтенд не собран | шаг 6 быстрого старта |
+| сборка падает по памяти | мало RAM | `CARGO_BUILD_JOBS=2 cargo run -p landscapes-generator` |
+
+Проверить, что всё в порядке, можно без окна:
+
+```sh
+cargo test -p generation-core                    # быстрые тесты без GPU
+cargo run -p terrains-generator -- --list        # печатает названия пресетов
+```
 
 ## Установка
 
+Этот раздел — дополнения к шагам 1-2 быстрого старта; если всё запустилось,
+читать его не нужно.
+
 Нужны **Rust 1.97.1 или новее** (`rust-toolchain.toml`), графическая сессия и
-драйвер видеокарты с Vulkan. Первая сборка Bevy занимает много времени и места.
+драйвер видеокарты с Vulkan.
 
-Ubuntu / Debian:
+Для уже установленного rustup: `rustup update stable`. Если после обновления
+используется старый Rust, выполните `source "$HOME/.cargo/env"` и `hash -r`.
+Наличие `cargo` из системных пакетов не значит, что версия достаточно новая.
 
-```bash
-sudo apt update
-sudo apt install build-essential pkg-config curl libx11-dev libasound2-dev \
-  libudev-dev libxkbcommon-x11-0 libwayland-dev libxkbcommon-dev
-```
+| Задача | Команда |
+| --- | --- |
+| пересобрать всё | `cargo build --workspace` |
+| быстрый запуск после первой сборки | `cargo run --release -p landscapes-generator` |
+| проверить код без сборки приложений | `cargo check --workspace` |
+| освободить место | `cargo clean` (удалит весь `target/`) |
 
-Для Intel/AMD при отсутствии Vulkan-драйвера: `sudo apt install mesa-vulkan-drivers`.
-Для NVIDIA нужен подходящий драйвер NVIDIA.
-
-Rust ставится через `rustup`, если его ещё нет:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
-sh /tmp/rustup-init.sh -y
-source "$HOME/.cargo/env"
-```
-
-Проверьте `cargo --version`: версия должна быть не ниже 1.97.1. Если после
-обновления используется старый Rust, выполните `source "$HOME/.cargo/env"` и
-`hash -r`. Наличие `cargo` из системных пакетов не значит, что версия достаточно
-новая.
-
-Для сборки установщика раннера дополнительно нужен **Node.js 20** (зависимости
-ставятся `npm ci` в `crates/lidar-dataset-runner/ui`).
-
-Последующие запуски используют собранные зависимости. Для более быстрой работы
-генераторов можно собрать с `--release`; первая такая сборка займёт дольше. При
-нехватке памяти добавьте `CARGO_BUILD_JOBS=2` перед `cargo run`.
+Первый `cargo build --release` дольше отладочного, зато генерация в окне идёт
+быстрее. `cargo check` проверяет код, но не создаёт исполняемых файлов — для
+запуска он не подходит.
 
 ## Ярлыки
 
-Чтобы запускать приложения из меню, а не из терминала, создайте ярлыки:
+Чтобы запускать приложения из меню, а не из терминала, создайте ярлыки. Команды
+выполняются из корня репозитория (там `.cargo/config.toml` объявляет `xtask`):
 
 ```sh
 cargo xtask launch-shortcuts --apps all          # все шесть приложений
@@ -107,17 +200,26 @@ cargo xtask launch-shortcuts --remove            # удалить созданн
 
 ## Установка раннера датасетов
 
-Готовые установщики прикладываются к прогонам CI (хранятся 14 дней):
+Раннер можно поставить как обычное приложение — тогда Node.js и Rust не нужны.
+Готовые установщики лежат в `installers/` в корне репозитория; в CI они
+прикладываются к прогонам (хранятся 14 дней).
 
-| ОС | Файл | Установка |
+| ОС | Файл | Как поставить |
 | --- | --- | --- |
-| Ubuntu / Debian | `.deb` | `sudo apt install ./lidar-dataset-runner_*.deb` |
-| Любой Linux | `.AppImage` | `chmod +x` и запуск файла |
-| Windows | `-setup.exe` | обычный установщик, ярлык в меню «Пуск» |
-| macOS | `.dmg` | перетащить в `Applications` |
+| Ubuntu / Debian | `.deb` | `sudo apt install "./installers/LiDAR Dataset Runner_0.1.0_amd64.deb"` |
+| Любой Linux | `.AppImage` | `chmod +x "installers/LiDAR Dataset Runner_0.1.0_amd64.AppImage"` и запустить файл |
+| Windows | `-setup.exe` | двойной клик, ярлык появится в меню «Пуск» |
+| macOS | `.dmg` | открыть и перетащить приложение в `Applications` |
+
+Проверить установку на Ubuntu / Debian:
+
+```sh
+apt list --installed | grep dataset-runner   # пакет li-dar-dataset-runner в списке
+lidar-dataset-runner                         # запуск из терминала
+```
 
 После установки раннер запускается из меню приложений; каталог пресетов лежит
-внутри пакета.
+внутри пакета, отдельно класть `presets/` не нужно.
 
 Ограничения:
 
@@ -215,6 +317,18 @@ cargo check --workspace
 cd crates/lidar-dataset-runner/ui && npm run build && cd -
 cd crates/lidar-dataset-runner && npx tauri build --bundles deb -- --locked
 ```
+
+## Документация
+
+Команда ведёт документацию в `wiki/` как хранилище Obsidian:
+
+- `🏠 Главная.md` — точка входа;
+- `Архитектура.md` — состав и связи крейтов;
+- `Запуск.md` — установка и запуск на Linux;
+- `Дорожная карта.md` — фазы разработки;
+- `Улучшения.md` — идеи и задачи по каждому генератору;
+- «Роли.md», «Создание объекта.md» — процессы команды и создание пресетов;
+- `local/` в вики и корне — личные заметки, в Git не попадают.
 
 ## Что дальше
 
