@@ -1,12 +1,16 @@
 //! Интерактивная демонстрация и пакетный экспорт без графического окна.
-use crate::{ScanAccumulator, ScanFrame, ScanScene, ScannerConfig, ScannerPose, orbit_trajectory};
+use crate::trajectory::{SceneBounds, TrajectoryKind};
+use crate::{ScanAccumulator, ScanFrame, ScanScene, ScannerConfig, ScannerPose};
 use bevy::prelude::*;
-use bevy_utils::cameras::{CameraPlugin, MainCamera};
+use bevy_utils::cameras::{CameraPlugin, MainCamera, OrbitCamera};
+use bevy_utils::preset_selector::PresetSelectorPlugin;
 use buildings_generator::{Building, BuildingConfig};
 use generation_core::{
     PointClass, PointCloud, PointCloudRenderPlugin, PointCloudTag, Seed,
     point_clouds::visual::{ATTRIBUTE_POINT_SIZE, point_cloud_mesh},
 };
+use generation_core::{UiModalOpen, general::RegenerationRequest, presets::PresetStore};
+use rand::RngExt;
 use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -19,16 +23,23 @@ pub struct DemoOptions {
     pub scanner: ScannerConfig,
     pub frames: usize,
     pub output: String,
+    /// Полный id: buildings/cabin, plants/fir и т.д.
+    pub preset: Option<String>,
+    pub trajectory: TrajectoryKind,
+    pub auto_fov: bool,
 }
 
 impl Default for DemoOptions {
     fn default() -> Self {
         Self {
             seed: Seed::default(),
-            source_step: 0.08,
+            source_step: 0.3,
             scanner: ScannerConfig::default(),
-            frames: 72,
-            output: "assets/export/building-scan.ply".into(),
+            frames: 24,
+            output: "assets/export/scan.xyz".into(),
+            preset: None,
+            trajectory: TrajectoryKind::Orbit,
+            auto_fov: true,
         }
     }
 }
@@ -37,6 +48,9 @@ impl Default for DemoOptions {
 struct Demo {
     options: DemoOptions,
     scene: ScanScene,
+    bounds: SceneBounds,
+    preset_label: String,
+    active_scanner: ScannerConfig,
     path: Vec<ScannerPose>,
     index: usize,
     pose: ScannerPose,
@@ -50,31 +64,73 @@ struct Demo {
 }
 
 impl Demo {
+    #[cfg(test)]
     fn new(options: DemoOptions) -> Self {
-        let building = Building::generate(&BuildingConfig {
-            seed: options.seed,
-            point_step: options.source_step,
-            wall_point_step: options.source_step,
-            // Исходная поверхность точна; шум измерений добавляет сканер.
-            point_jitter: 0.0,
-            ..default()
-        });
-        let target = Vec3::new(0.0, building.total_height() * 0.45, 0.0);
-        let path = orbit_trajectory(
-            target,
-            building.footprint_diagonal() * 1.5,
-            building.total_height() + 4.0,
-            options.frames,
-        );
-        let scene = ScanScene::from_building(&building);
+        Self::from_store(options, None).unwrap()
+    }
+
+    fn from_store(options: DemoOptions, store: Option<&PresetStore>) -> Result<Self, String> {
+        let meta = if let Some(store) = store {
+            if let Some(id) = &options.preset {
+                Some(
+                    store
+                        .meta(id)
+                        .ok_or_else(|| format!("Неизвестный пресет: {id}"))?,
+                )
+            } else {
+                let mut choices: Vec<_> = store
+                    .presets
+                    .iter()
+                    .filter(|p| store.selected.contains(&p.id))
+                    .collect();
+                choices.sort_by(|a, b| a.id.cmp(&b.id));
+                if choices.is_empty() {
+                    return Err("Выберите объекты в Ctrl+S".into());
+                }
+                let mut rng = options.seed.with_label("scan-source").rng();
+                Some(choices[rng.random_range(0..choices.len())])
+            }
+        } else {
+            None
+        };
+        let (scene, preset_label) = if let Some(meta) = meta {
+            (
+                crate::sources::from_preset(
+                    meta,
+                    &store.unwrap().root,
+                    options.seed,
+                    options.source_step,
+                )?,
+                meta.id.clone(),
+            )
+        } else {
+            let building = Building::generate(&BuildingConfig {
+                seed: options.seed,
+                point_step: options.source_step,
+                wall_point_step: options.source_step,
+                point_jitter: 0.0,
+                ..default()
+            });
+            (ScanScene::from_building(&building), "building".into())
+        };
+        let bounds = SceneBounds::from_cloud(&scene.cloud).ok_or("Пустая сцена")?;
+        let path = bounds.trajectory(options.trajectory, options.frames, options.seed);
         let pose = path[0];
+        let active_scanner = if options.auto_fov {
+            bounds.fit_config(pose, &options.scanner)
+        } else {
+            options.scanner.clone()
+        };
         let frame = scene
-            .scan(pose, &options.scanner, options.seed.child(0))
+            .scan(pose, &active_scanner, options.seed.child(0))
             .expect("validated options");
         let mut accumulated = ScanAccumulator::new(scene.cloud.len());
         accumulated.add(&frame);
-        Self {
+        Ok(Self {
             options,
+            bounds,
+            preset_label,
+            active_scanner,
             scene,
             path,
             index: 0,
@@ -84,9 +140,9 @@ impl Demo {
             cumulative: false,
             show_context: true,
             running: false,
-            timer: Timer::from_seconds(0.15, TimerMode::Repeating),
+            timer: Timer::from_seconds(0.5, TimerMode::Repeating),
             status: String::new(),
-        }
+        })
     }
 
     fn capture(&mut self, pose: ScannerPose, reset: bool) {
@@ -95,11 +151,16 @@ impl Demo {
             self.accumulated = ScanAccumulator::new(self.scene.cloud.len());
         }
         self.pose = pose;
+        self.active_scanner = if self.options.auto_fov {
+            self.bounds.fit_config(pose, &self.options.scanner)
+        } else {
+            self.options.scanner.clone()
+        };
         self.frame = self
             .scene
             .scan(
                 pose,
-                &self.options.scanner,
+                &self.active_scanner,
                 self.options.seed.child(self.accumulated.frames as u64),
             )
             .expect("validated options");
@@ -116,22 +177,7 @@ impl Demo {
 
     fn mesh(&self) -> Mesh {
         if !self.show_context {
-            let mut mesh = point_cloud_mesh(self.result());
-            let colors: Vec<[f32; 4]> = self
-                .result()
-                .points
-                .iter()
-                .map(|point| {
-                    if point.class == PointClass::LowNoise {
-                        [1.0, 0.55, 0.05, 1.0]
-                    } else {
-                        let c = point.class.color().to_srgba();
-                        [c.red, c.green, c.blue, 1.0]
-                    }
-                })
-                .collect();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-            return mesh;
+            return point_cloud_mesh(self.result());
         }
         let mut mask = vec![false; self.scene.cloud.len()];
         if self.cumulative {
@@ -169,7 +215,8 @@ impl Demo {
         for point in &self.result().points {
             if point.class == PointClass::LowNoise {
                 positions.push(point.position.to_array());
-                colors.push([1.0, 0.55, 0.05, 1.0]);
+                let c = point.class.color().to_srgba();
+                colors.push([c.red, c.green, c.blue, 1.0]);
                 sizes.push(PointClass::LowNoise.point_size());
             }
         }
@@ -188,7 +235,64 @@ pub fn validate_options(options: &DemoOptions) -> Result<(), &'static str> {
     if !(1..=10000).contains(&options.frames) {
         return Err("frames должен быть от 1 до 10000");
     }
+    if !matches!(
+        Path::new(&options.output)
+            .extension()
+            .and_then(|s| s.to_str()),
+        Some("xyz" | "ply")
+    ) {
+        return Err("output должен иметь расширение .xyz или .ply");
+    }
     Ok(())
+}
+
+pub fn preset_selector() -> PresetSelectorPlugin {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let roots = generation_core::presets::resolve_data_roots(
+        "",
+        manifest.join("../..").join("presets"),
+        manifest.join("settings"),
+    );
+    PresetSelectorPlugin {
+        category: "",
+        presets_root: roots.presets_root,
+        settings_dir: roots.settings_dir.join("lidar-simulator"),
+    }
+}
+
+/// Общий XYZ-экспорт generation-core; PLY оставлен для существующих сценариев.
+pub fn export_scan(cloud: &PointCloud, path: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("xyz") => generation_core::point_clouds::export::write_xyz(cloud, path),
+        Some("ply") => export_ply(cloud, path),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Ожидается .xyz или .ply",
+        )),
+    }
+}
+
+fn regenerate_selected(
+    mut requests: MessageReader<RegenerationRequest>,
+    store: Res<PresetStore>,
+    mut demo: ResMut<Demo>,
+    mut orbit: ResMut<OrbitCamera>,
+) {
+    if requests.read().count() == 0 {
+        return;
+    }
+    let mut options = demo.options.clone();
+    options.preset = None;
+    match Demo::from_store(options, Some(&store)) {
+        Ok(mut next) => {
+            next.show_context = demo.show_context;
+            orbit.focus = next.bounds.center();
+            orbit.radius = next.bounds.radius() * 2.8;
+            *demo = next;
+        }
+        Err(error) => demo.status = error,
+    }
 }
 
 /// Только измеренные точки, без серого контекста. Класс LowNoise = 7.
@@ -204,14 +308,7 @@ pub fn export_ply(cloud: &PointCloud, path: impl AsRef<Path>) -> std::io::Result
         cloud.len()
     )?;
     for point in &cloud.points {
-        let class = match point.class {
-            PointClass::Ground => 2,
-            PointClass::Vegetation => 5,
-            PointClass::Building => 6,
-            PointClass::LowNoise => 7,
-            PointClass::Water => 9,
-            PointClass::Other => 1,
-        };
+        let class = point.class.code();
         writeln!(
             out,
             "{} {} {} {}",
@@ -223,12 +320,15 @@ pub fn export_ply(cloud: &PointCloud, path: impl AsRef<Path>) -> std::io::Result
 
 pub fn run_headless(options: DemoOptions) -> Result<(), Box<dyn std::error::Error>> {
     validate_options(&options)?;
-    let mut demo = Demo::new(options);
+    let selector = preset_selector();
+    let mut store = PresetStore::discover_all(&selector.presets_root);
+    store.load_selection(&selector.settings_dir);
+    let mut demo = Demo::from_store(options, Some(&store))?;
     demo.accumulated = ScanAccumulator::new(demo.scene.cloud.len());
     for index in 0..demo.path.len() {
         demo.capture(demo.path[index], false);
     }
-    export_ply(&demo.accumulated.cloud, &demo.options.output)?;
+    export_scan(&demo.accumulated.cloud, &demo.options.output)?;
     println!(
         "Кадров: {}, исходных точек: {}, увидено: {}, итог с Low Noise: {}. Файл: {}",
         demo.accumulated.frames,
@@ -240,7 +340,7 @@ pub fn run_headless(options: DemoOptions) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-pub fn run(options: DemoOptions) -> Result<(), &'static str> {
+pub fn run(options: DemoOptions) -> Result<(), Box<dyn std::error::Error>> {
     validate_options(&options)?;
     // Ассеты ищем рядом с exe/в рабочем каталоге (переносимая сборка), а путь
     // сборочной машины оставляем запасным для `cargo run`.
@@ -251,19 +351,30 @@ pub fn run(options: DemoOptions) -> Result<(), &'static str> {
             .join("buildings-generator")
             .join("assets"),
     );
+    let selector = preset_selector();
+    let mut store = PresetStore::discover_all(&selector.presets_root);
+    store.load_selection(&selector.settings_dir);
+    let demo = Demo::from_store(options, Some(&store))?;
+    let focus = demo.bounds.center();
+    let radius = demo.bounds.radius() * 2.8;
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.025, 0.035, 0.05)))
-        .insert_resource(Demo::new(options))
+        .insert_resource(demo)
+        .add_message::<RegenerationRequest>()
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
                 file_path: assets_root.to_string_lossy().into_owned(),
                 ..default()
             }),
             PointCloudRenderPlugin,
-            CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 55.0),
+            CameraPlugin::new(focus, radius),
+            selector,
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, (controls, refresh, draw_scanner).chain())
+        .add_systems(
+            Update,
+            (controls, regenerate_selected, refresh, draw_scanner).chain(),
+        )
         .run();
     Ok(())
 }
@@ -308,17 +419,49 @@ fn controls(
     time: Res<Time>,
     mut demo: ResMut<Demo>,
     camera: Query<&Transform, With<MainCamera>>,
+    ui: Res<UiModalOpen>,
+    store: Res<PresetStore>,
+    mut orbit: ResMut<OrbitCamera>,
 ) {
+    if ui.0 {
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyR) {
         let mut options = demo.options.clone();
         if !keys.pressed(KeyCode::ShiftLeft) && !keys.pressed(KeyCode::ShiftRight) {
             options.seed = Seed::from_entropy();
         }
         let show_context = demo.show_context;
-        *demo = Demo::new(options);
-        demo.show_context = show_context;
+        match Demo::from_store(options, Some(&store)) {
+            Ok(mut next) => {
+                next.show_context = show_context;
+                orbit.focus = next.bounds.center();
+                orbit.radius = next.bounds.radius() * 2.8;
+                *demo = next;
+            }
+            Err(error) => demo.status = error,
+        }
     }
     let mut recapture = false;
+    if keys.just_pressed(KeyCode::KeyL) {
+        demo.options.trajectory = if demo.options.trajectory == TrajectoryKind::Orbit {
+            TrajectoryKind::Line
+        } else {
+            TrajectoryKind::Orbit
+        };
+        demo.path = demo.bounds.trajectory(
+            demo.options.trajectory,
+            demo.options.frames,
+            demo.options.seed,
+        );
+        demo.index = 0;
+        demo.pose = demo.path[0];
+        recapture = true;
+    }
+    if keys.just_pressed(KeyCode::KeyF) {
+        demo.options.auto_fov = !demo.options.auto_fov;
+        recapture = true;
+    }
     if keys.just_pressed(KeyCode::BracketLeft) {
         demo.options.scanner.sample_step = (demo.options.scanner.sample_step / 1.25).max(0.02);
         recapture = true;
@@ -400,7 +543,7 @@ fn controls(
         }
     }
     if keys.just_pressed(KeyCode::KeyX) {
-        demo.status = match export_ply(demo.result(), &demo.options.output) {
+        demo.status = match export_scan(demo.result(), &demo.options.output) {
             Ok(()) => format!("Сохранено: {}", demo.options.output),
             Err(error) => format!("Ошибка сохранения: {error}"),
         };
@@ -423,7 +566,7 @@ fn refresh(
     }
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "LiDAR · seed {} · ракурс {}/{}\nИсходное облако: {} · сетка {:.2} м\nШаг сканера: {:.2} м · Low Noise: {:.1}%\nРежим: {} · кадров накоплено: {}\nТочек в результате: {} · шумовых: {}\nОтображение: {} · высота сканера {:.1} м\n\nКрасные — захвачены · серые — не захвачены · оранжевые — Low Noise\n←/→ ракурс · Space кадр из камеры · T траектория · P пауза\nV всё/отсканированное · M кадр/накопление · C сброс\n[/] шаг · N шум · X сохранить PLY\nR новое здание · Shift+R повтор · Tab камера · мышь вращение/зум\nКамера — осмотр; Space — переснять с её позиции\n{}",
+            "LiDAR · seed {} · ракурс {}/{}\nИсходное облако: {} · шаг отдельных объектов {:.2} м\nШаг в плоскости 10 м: {:.2} м · Low Noise: {:.1}%\nРежим: {} · кадров накоплено: {}\nТочек в результате: {} · шумовых: {}\nОтображение: {} · высота сканера {:.1} м\n\nОтсканированные — цвет класса · серые — не отсканированы · Low Noise — цвет класса\n←/→ ракурс · Space кадр из камеры · T траектория · P пауза\nV всё/отсканированное · M кадр/накопление · C сброс\n[/] шаг · N шум · X сохранить XYZ/PLY\nR новый объект · Shift+R повтор · Tab камера · мышь вращение/зум\nCtrl+S пресеты · L орбита/прямая · F авто-FOV\nКамера — осмотр; Space — переснять с её позиции\n{} · {:?} · авто-FOV {} · {:.1}° × {:.1}°\n{}",
             demo.options.seed,
             demo.index + 1,
             demo.path.len(),
@@ -449,6 +592,11 @@ fn refresh(
                 "только отсканированное"
             },
             demo.pose.position.y,
+            demo.preset_label,
+            demo.options.trajectory,
+            demo.options.auto_fov,
+            demo.active_scanner.horizontal_fov.to_degrees(),
+            demo.active_scanner.vertical_fov.to_degrees(),
             demo.status
         );
     }
@@ -456,7 +604,12 @@ fn refresh(
 
 fn draw_scanner(demo: Res<Demo>, mut gizmos: Gizmos) {
     let color = Color::srgb(0.1, 0.85, 1.0);
-    for i in 0..demo.path.len() {
+    let segments = if demo.options.trajectory == TrajectoryKind::Orbit {
+        demo.path.len()
+    } else {
+        demo.path.len().saturating_sub(1)
+    };
+    for i in 0..segments {
         gizmos.line(
             demo.path[i].position,
             demo.path[(i + 1) % demo.path.len()].position,
@@ -464,8 +617,8 @@ fn draw_scanner(demo: Res<Demo>, mut gizmos: Gizmos) {
         );
     }
     let pose = demo.pose;
-    let h = (demo.options.scanner.horizontal_fov * 0.5).tan() * 3.0;
-    let v = (demo.options.scanner.vertical_fov * 0.5).tan() * 3.0;
+    let h = (demo.active_scanner.horizontal_fov * 0.5).tan() * 3.0;
+    let v = (demo.active_scanner.vertical_fov * 0.5).tan() * 3.0;
     let corners = [
         Vec3::new(-h, -v, -3.0),
         Vec3::new(h, -v, -3.0),
@@ -523,7 +676,10 @@ mod tests {
         assert_eq!(
             colors
                 .iter()
-                .filter(|&&c| c == [1.0, 0.55, 0.05, 1.0])
+                .filter(|&&c| {
+                    let color = PointClass::LowNoise.color().to_srgba();
+                    c == [color.red, color.green, color.blue, 1.0]
+                })
                 .count(),
             captured
         );
@@ -558,7 +714,10 @@ mod tests {
             assert_eq!(
                 colors
                     .iter()
-                    .filter(|&&c| c == [1.0, 0.55, 0.05, 1.0])
+                    .filter(|&&c| {
+                        let color = PointClass::LowNoise.color().to_srgba();
+                        c == [color.red, color.green, color.blue, 1.0]
+                    })
                     .count(),
                 demo.result()
                     .points

@@ -1,4 +1,5 @@
 use lidar_simulator::demo::{DemoOptions, run, run_headless};
+use lidar_simulator::trajectory::TrajectoryKind;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut options = DemoOptions::default();
@@ -9,9 +10,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             headless = true;
             continue;
         }
+        if arg == "--fixed-fov" {
+            options.auto_fov = false;
+            continue;
+        }
+        if arg == "--list" {
+            let selector = lidar_simulator::demo::preset_selector();
+            let store = generation_core::presets::PresetStore::discover_all(&selector.presets_root);
+            for preset in &store.presets {
+                println!("{} · {}", preset.id, preset.name);
+            }
+            return Ok(());
+        }
         if arg == "--help" || arg == "-h" {
             println!(
-                "lidar-simulator [--headless] [--source-step 0.08] [--scan-step 0.25]\n  [--noise-probability 0.02] [--noise-extent 0.12] [--frames 72]\n  [--seed 12648430] [--output assets/export/building-scan.ply]"
+                "lidar-simulator [--headless] [--list] [--preset buildings/cabin]\n  [--trajectory orbit|line] [--fixed-fov] [--source-step 0.3]\n  [--scan-step 0.25] [--noise-probability 0.02] [--noise-extent 0.12]\n  [--frames 24] [--seed 12648430] [--output assets/export/scan.xyz]\nШаг сканера задаётся на плоскости в 10 м от камеры. Ctrl+S: выбор пресетов."
             );
             return Ok(());
         }
@@ -23,6 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--frames",
             "--seed",
             "--output",
+            "--preset",
+            "--trajectory",
         ]
         .contains(&arg.as_str())
         {
@@ -39,6 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--frames" => options.frames = value.parse()?,
             "--seed" => options.seed = value.parse::<u64>()?.into(),
             "--output" => options.output = value,
+            "--preset" => options.preset = Some(value),
+            "--trajectory" => {
+                options.trajectory = match value.as_str() {
+                    "orbit" => TrajectoryKind::Orbit,
+                    "line" => TrajectoryKind::Line,
+                    _ => return Err("trajectory: ожидается orbit или line".into()),
+                }
+            }
             _ => unreachable!(),
         }
     }

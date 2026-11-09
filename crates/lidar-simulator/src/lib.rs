@@ -3,6 +3,8 @@
 
 pub mod demo;
 mod occlusion;
+pub mod sources;
+pub mod trajectory;
 
 use std::collections::BTreeMap;
 
@@ -16,7 +18,8 @@ use occlusion::Occlusion;
 /// Независимые от плотности генератора параметры измерения.
 #[derive(Clone, Debug)]
 pub struct ScannerConfig {
-    /// Размер мировой ячейки отбора, м: один ближайший видимый отсчёт на ячейку.
+    /// Шаг на плоскости камеры в 10 м от сканера, м.
+    /// Проекция перспективная: плотность падает с дальностью и углом падения.
     pub sample_step: f32,
     pub horizontal_fov: f32,
     pub vertical_fov: f32,
@@ -24,7 +27,7 @@ pub struct ScannerConfig {
     pub max_range: f32,
     /// Вероятность ДОБАВИТЬ шумовую точку к каждому принятому отсчёту.
     pub noise_probability: f32,
-    /// Максимальное смещение добавленной точки по каждой оси, м.
+    /// Максимальное смещение по каждой локальной оси камеры, м.
     pub noise_extent: f32,
     /// Допуск к поверхности, м (для численных ошибок и jitter генератора).
     pub surface_tolerance: f32,
@@ -161,7 +164,8 @@ impl ScanScene {
         {
             return Err("некорректная поза сканера");
         }
-        let mut cells = BTreeMap::<(i64, i64, i64), (usize, f32)>::new();
+        let mut cells = BTreeMap::<(i64, i64), (usize, f32)>::new();
+        let inverse_rotation = pose.rotation.inverse();
         let tan_h = (config.horizontal_fov * 0.5).tan();
         let tan_v = (config.vertical_fov * 0.5).tan();
         for (index, point) in self.cloud.points.iter().enumerate() {
@@ -174,9 +178,21 @@ impl ScanScene {
             {
                 continue;
             }
-            let local = pose.rotation.inverse() * delta;
+            let local = inverse_rotation * delta;
             let depth = -local.z;
             if depth <= 0.0 || local.x.abs() > depth * tan_h || local.y.abs() > depth * tan_v {
+                continue;
+            }
+            // Z-buffer на плоскости камеры: один ближайший видимый возврат
+            // на луч/ячейку. Мировая сетка создавала одинаковую плотность
+            // на фронтальных и почти касательных поверхностях.
+            let projected = Vec2::new(local.x, local.y) * (10.0 / depth);
+            let p = (projected / config.sample_step).floor();
+            let key = (p.x as i64, p.y as i64);
+            if cells
+                .get(&key)
+                .is_some_and(|&(_, nearest)| nearest <= distance)
+            {
                 continue;
             }
             if self.occlusion.blocked(
@@ -186,12 +202,7 @@ impl ScanScene {
             ) {
                 continue;
             }
-            let p = (point.position / config.sample_step).floor();
-            let key = (p.x as i64, p.y as i64, p.z as i64);
-            let cell = cells.entry(key).or_insert((index, distance));
-            if distance < cell.1 {
-                *cell = (index, distance);
-            }
+            cells.insert(key, (index, distance));
         }
         let mut source_indices: Vec<_> = cells.values().map(|(index, _)| *index).collect();
         source_indices.sort_unstable();
@@ -202,11 +213,13 @@ impl ScanScene {
         let mut rng = seed.rng();
         for &index in &source_indices {
             if rng.random::<f32>() < config.noise_probability {
-                let offset = Vec3::new(
-                    rng.random_range(-config.noise_extent..=config.noise_extent),
-                    rng.random_range(-config.noise_extent..=config.noise_extent),
-                    rng.random_range(-config.noise_extent..=config.noise_extent),
-                );
+                // Шум по двум осям плоскости камеры и по глубине измерения.
+                let offset = pose.rotation
+                    * Vec3::new(
+                        rng.random_range(-config.noise_extent..=config.noise_extent),
+                        rng.random_range(-config.noise_extent..=config.noise_extent),
+                        rng.random_range(-config.noise_extent..=config.noise_extent),
+                    );
                 cloud.points.push(Point::new(
                     self.cloud.points[index].position + offset,
                     PointClass::LowNoise,

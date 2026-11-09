@@ -368,6 +368,7 @@ fn headless_single_frame_exports_ply_without_context_points() {
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(format!("scan-{}.ply", std::process::id()));
     demo::run_headless(demo::DemoOptions {
+        preset: Some("buildings/cabin".into()),
         source_step: 0.3,
         frames: 1,
         scanner: ScannerConfig {
@@ -388,4 +389,143 @@ fn headless_single_frame_exports_ply_without_context_points() {
         points.len()
     );
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn projection_uses_nearest_return_and_depends_on_incidence_and_distance() {
+    let pose = ScannerPose::looking_at(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO);
+    let cfg = ScannerConfig {
+        sample_step: 0.1,
+        ..config()
+    };
+    let plane = |angle: f32| {
+        let rotation = Quat::from_rotation_y(angle);
+        let points: Vec<_> = (0..81)
+            .flat_map(|i| {
+                (0..81).map(move |j| {
+                    rotation * Vec3::new(i as f32 * 0.05 - 2.0, j as f32 * 0.05 - 2.0, 0.0)
+                })
+            })
+            .collect();
+        ScanScene::new(cloud(&points), vec![])
+    };
+    let frontal = plane(0.0).scan(pose, &cfg, Seed(1)).unwrap().cloud.len();
+    let grazing = plane(80.0_f32.to_radians())
+        .scan(pose, &cfg, Seed(1))
+        .unwrap()
+        .cloud
+        .len();
+    let far = plane(0.0)
+        .scan(
+            ScannerPose::looking_at(Vec3::Z * 20.0, Vec3::ZERO),
+            &cfg,
+            Seed(1),
+        )
+        .unwrap()
+        .cloud
+        .len();
+    assert!(
+        grazing < frontal / 2,
+        "frontal={frontal}, grazing={grazing}"
+    );
+    assert!(far < frontal / 2);
+    // Совпадающая проекция на разных глубинах: остаётся ближний возврат.
+    let scene = ScanScene::new(cloud(&[Vec3::NEG_Z, Vec3::ZERO]), vec![]);
+    assert_eq!(
+        scene.scan(pose, &cfg, Seed(1)).unwrap().source_indices,
+        vec![1]
+    );
+}
+
+#[test]
+fn randomized_paths_are_reproducible_straight_and_fit_scene() {
+    use crate::trajectory::{SceneBounds, TrajectoryKind};
+    let bounds = SceneBounds {
+        min: Vec3::splat(-10.0),
+        max: Vec3::splat(10.0),
+    };
+    for kind in [TrajectoryKind::Line, TrajectoryKind::Orbit] {
+        for seed in 0..20 {
+            let path = bounds.trajectory(kind, 12, Seed(seed));
+            let repeat = bounds.trajectory(kind, 12, Seed(seed));
+            let different = bounds.trajectory(kind, 12, Seed(seed + 1));
+            assert_ne!(path[0].position, different[0].position);
+            for (a, b) in path.iter().zip(&repeat) {
+                assert_eq!(a.position, b.position);
+                assert!(a.position.is_finite() && a.rotation.is_normalized());
+                assert!(
+                    (a.rotation * Vec3::NEG_Z).dot((bounds.center() - a.position).normalize())
+                        > 0.999
+                );
+                let cfg = bounds.fit_config(*a, &config());
+                cfg.validate().unwrap();
+                for x in [bounds.min.x, bounds.max.x] {
+                    for y in [bounds.min.y, bounds.max.y] {
+                        for z in [bounds.min.z, bounds.max.z] {
+                            let local = a.rotation.inverse() * (Vec3::new(x, y, z) - a.position);
+                            assert!(local.x.abs() <= -local.z * (cfg.horizontal_fov * 0.5).tan());
+                            assert!(local.y.abs() <= -local.z * (cfg.vertical_fov * 0.5).tan());
+                        }
+                    }
+                }
+            }
+            if kind == TrajectoryKind::Line {
+                let delta = path[1].position - path[0].position;
+                for segment in path.windows(2) {
+                    assert!((segment[1].position - segment[0].position - delta).length() < 0.001);
+                }
+            }
+        }
+        assert!(bounds.trajectory(kind, 0, Seed(1)).is_empty());
+        assert_eq!(bounds.trajectory(kind, 1, Seed(1)).len(), 1);
+    }
+}
+
+#[test]
+fn all_generator_categories_scan_and_export_shared_xyz() {
+    use crate::trajectory::{SceneBounds, TrajectoryKind};
+    use generation_core::presets::PresetStore;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../presets");
+    let store = PresetStore::discover_all(&root);
+    let ids: std::collections::BTreeSet<_> = store.presets.iter().map(|m| &m.id).collect();
+    assert_eq!(
+        ids.len(),
+        store.presets.len(),
+        "id must be unique across categories"
+    );
+    for id in [
+        "buildings/cabin",
+        "plants/cactus-small",
+        "landscapes/plain",
+        "terrains/open-field",
+    ] {
+        let meta = store.meta(id).unwrap_or_else(|| panic!("missing {id}"));
+        let scene = sources::from_preset(meta, &root, Seed(42), 1.0).unwrap();
+        let bounds = SceneBounds::from_cloud(&scene.cloud).unwrap();
+        let pose = bounds.trajectory(TrajectoryKind::Orbit, 1, Seed(42))[0];
+        let cfg = bounds.fit_config(
+            pose,
+            &ScannerConfig {
+                noise_probability: 1.0,
+                ..config()
+            },
+        );
+        let frame = scene.scan(pose, &cfg, Seed(42)).unwrap();
+        assert!(!frame.source_indices.is_empty(), "{id}");
+        assert_eq!(frame.cloud.len(), frame.source_indices.len() * 2);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/scanner-tests")
+            .join(format!("{}.xyz", id.replace('/', "-")));
+        demo::export_scan(&frame.cloud, &path).unwrap();
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            output,
+            generation_core::point_clouds::export::to_xyz(&frame.cloud)
+        );
+        assert_eq!(
+            output.lines().filter(|s| s.starts_with("7 ")).count(),
+            frame.source_indices.len()
+        );
+        std::fs::remove_file(path).unwrap();
+    }
 }

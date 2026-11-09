@@ -3632,7 +3632,10 @@ dependencies = [
  "bevy-utils",
  "buildings-generator",
  "generation-core",
+ "landscapes-generator",
+ "plants-generator",
  "rand 0.10.3",
+ "terrains-generator",
 ]
 
 [[package]]
