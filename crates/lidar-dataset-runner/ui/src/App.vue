@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import RecipeForm from "./components/RecipeForm.vue";
 import StatusPill from "./components/StatusPill.vue";
 import RunProgress from "./components/RunProgress.vue";
 import StatsTable from "./components/StatsTable.vue";
 import { type RunState } from "./lib/labels";
+import {
+  clearDraft,
+  loadDraft,
+  reconcileRecipe,
+  saveDraft,
+  type Draft,
+} from "./lib/draft";
 import {
   cancelGeneration,
   getCatalog,
@@ -35,20 +42,32 @@ const jobId = ref<string | null>(null);
 const progress = ref<ProgressEvent | null>(null);
 const report = ref<RunReport | null>(null);
 
-const recipe = ref<Recipe>({
+const DEFAULT_RECIPE: Recipe = {
   scenes: 2,
   seed: 42,
   landscape: "",
   maxSlopeDeg: 25,
-  elements: [],
-});
+  elements: [
+    { kind: "building", presetId: "rectangular", count: 4 },
+    { kind: "tree", presetId: "deciduous-tree", count: 6 },
+    { kind: "bush", presetId: "bush", count: 10 },
+    { kind: "grass", presetId: "sparse-grass", count: 400 },
+  ],
+};
+
+const stored = loadDraft();
+
+const recipe = ref<Recipe>(stored?.recipe ?? structuredClone(DEFAULT_RECIPE));
 
 let unlisten: UnlistenFn[] = [];
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
+let restoredOutputDir = stored?.outputDir ?? null;
 
 async function loadCatalog() {
   const info = await getCatalog();
   catalog.value = info.catalog;
   presetsRoot.value = info.presetsRoot;
+  recipe.value = reconcileRecipe(recipe.value, info.catalog);
   if (!recipe.value.landscape && info.catalog.landscapes.length) {
     recipe.value = { ...recipe.value, landscape: info.catalog.landscapes[0].id };
   }
@@ -99,6 +118,34 @@ async function start() {
   }
 }
 
+function scheduleDraftSave() {
+  if (state.value === "running") {
+    return;
+  }
+  if (draftTimer !== null) {
+    clearTimeout(draftTimer);
+  }
+  draftTimer = setTimeout(() => {
+    draftTimer = null;
+    const draft: Draft = { recipe: recipe.value, outputDir: outputDir.value };
+    saveDraft(draft);
+  }, 300);
+}
+
+watch([recipe, outputDir], scheduleDraftSave, { deep: true });
+
+async function resetRecipe() {
+  if (draftTimer !== null) {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+  }
+  clearDraft();
+  recipe.value = structuredClone(DEFAULT_RECIPE);
+  issues.value = [];
+  await loadCatalog();
+  outputDir.value = await getDefaultOutputDir();
+}
+
 async function cancel() {
   if (!jobId.value) {
     return;
@@ -108,7 +155,8 @@ async function cancel() {
 
 onMounted(async () => {
   classes.value = await getPointClasses();
-  outputDir.value = await getDefaultOutputDir();
+  outputDir.value = restoredOutputDir ?? (await getDefaultOutputDir());
+  restoredOutputDir = null;
   await loadCatalog();
 
   unlisten.push(await onProgress((event) => (progress.value = event)));
@@ -129,6 +177,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (draftTimer !== null) {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+  }
   for (const stop of unlisten) {
     stop();
   }
@@ -157,6 +209,7 @@ onUnmounted(() => {
         @update:output-dir="outputDir = $event"
         @pick-output="pickOutput"
         @start="start"
+        @reset="resetRecipe"
         @cancel="cancel"
       />
 

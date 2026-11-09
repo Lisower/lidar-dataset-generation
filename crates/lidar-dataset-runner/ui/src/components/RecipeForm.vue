@@ -27,6 +27,7 @@ const emit = defineEmits<{
   (e: "update:outputDir", value: string): void;
   (e: "pick-output"): void;
   (e: "start"): void;
+  (e: "reset"): void;
   (e: "cancel"): void;
 }>();
 
@@ -287,6 +288,9 @@ function focusField(field: string) {
     </fieldset>
 
     <div class="actions">
+      <button type="button" class="btn btn-ghost" :disabled="running" @click="emit('reset')">
+        Сбросить настройки
+      </button>
       <button type="button" class="btn btn-primary" :disabled="running" @click="emit('start')">
         Сгенерировать датасет
       </button>
