@@ -5,11 +5,11 @@
 //! радиусом в один пиксель. Поэтому точки прореживаются по сетке, координаты
 //! округляются, а класс заменяется кодом из палитры.
 //!
-//! Прореживание детерминировано: укладываем точки в ячейки сетки и оставляем
-//! первую точку ячейки в порядке обхода облака. Один и тот же рецепт даёт
-//! одно и то же превью, и порядок точек не зависит от хеш-таблиц.
-
-use std::collections::HashMap;
+//! Прореживание детерминировано: точки берутся равномерным шагом по облаку,
+//! поэтому один и тот же рецепт даёт одно и то же превью, а все классы
+//! сохраняют свою долю. Сетка по объёму для этого не годится: сцена это
+//! плоский рельеф 100 на 100 метров, и кубическая ячейка оставляла бы одну
+//! точку на несколько метров, теряя почти всё облако.
 
 use generation_core::PointCloud;
 use serde::Serialize;
@@ -73,42 +73,26 @@ impl ScenePreview {
 
 /// Прореженные точки облака в виде `[x, y, z, класс, ...]`.
 ///
-/// Поверх лимита в одну ячейку сетки попадает одна точка: сетка подбирается
-/// по габаритам, чтобы ячеек было примерно столько же, сколько нужно точек.
+/// Шаг по облаку равномерный и не зависит от порядка классов, поэтому превью
+/// воспроизводимо и содержит ровно `limit` точек.
 pub fn decimate(cloud: &PointCloud, limit: usize) -> Vec<f32> {
-    if limit == 0 || cloud.points.is_empty() {
+    let total = cloud.points.len();
+    if limit == 0 || total == 0 {
         return Vec::new();
     }
-    if cloud.points.len() <= limit {
+    if total <= limit {
         return flatten(cloud, |_| true);
     }
 
-    let (min, max) = bounds(cloud);
-    let span = (max - min).max(bevy::math::Vec3::splat(1.0));
-    // Ячейка кубическая: шаг подбирается так, чтобы по объёму вышло около
-    // `limit` ячеек. Кубическая сетка не сгущает точки вдоль одной оси, как
-    // это сделала бы сетка в экранных координатах.
-    let cells_per_axis = (limit as f32).cbrt().ceil().max(1.0);
-    let cell = span / bevy::math::Vec3::splat(cells_per_axis);
-
-    let mut seen: HashMap<(i64, i64, i64), ()> = HashMap::new();
+    let step = total as f64 / limit as f64;
     let mut out = Vec::with_capacity(limit * 4);
-    for point in &cloud.points {
-        if out.len() / 4 >= limit {
-            break;
-        }
-        let relative = (point.position - min) / cell;
-        let key = (
-            relative.x.floor() as i64,
-            relative.y.floor() as i64,
-            relative.z.floor() as i64,
-        );
-        if seen.insert(key, ()).is_none() {
-            out.push(point.position.x);
-            out.push(point.position.y);
-            out.push(point.position.z);
-            out.push(point.class.code() as f32);
-        }
+    for index in 0..limit {
+        let source = ((index as f64) * step) as usize;
+        let point = &cloud.points[source.min(total - 1)];
+        out.push(point.position.x);
+        out.push(point.position.y);
+        out.push(point.position.z);
+        out.push(point.class.code() as f32);
     }
     out
 }
@@ -124,16 +108,6 @@ fn flatten(cloud: &PointCloud, keep: impl Fn(usize) -> bool) -> Vec<f32> {
         }
     }
     out
-}
-
-fn bounds(cloud: &PointCloud) -> (bevy::math::Vec3, bevy::math::Vec3) {
-    let mut min = bevy::math::Vec3::splat(f32::INFINITY);
-    let mut max = bevy::math::Vec3::splat(f32::NEG_INFINITY);
-    for point in &cloud.points {
-        min = min.min(point.position);
-        max = max.max(point.position);
-    }
-    (min, max)
 }
 
 /// Проверить рецепт и собрать превью сцены `index`.
@@ -179,12 +153,32 @@ mod tests {
     }
 
     #[test]
-    fn big_clouds_are_thinned_below_the_limit() {
+    fn big_clouds_fill_the_limit_exactly() {
         let cloud = flat_cloud(200_000);
         let points = decimate(&cloud, 5_000);
-        let shown = points.len() / 4;
-        assert!(shown <= 5_000, "показано {shown}");
-        assert!(shown > 0);
+        assert_eq!(points.len(), 5_000 * 4);
+    }
+
+    #[test]
+    fn thinning_keeps_every_class_represented() {
+        let mut cloud = PointCloud::new(PointClass::Ground);
+        for index in 0..10_000 {
+            let class = if index % 10 == 0 {
+                PointClass::Building
+            } else {
+                PointClass::Ground
+            };
+            cloud.points.push(generation_core::point_clouds::Point::new(
+                bevy::math::Vec3::new(index as f32, 0.0, 0.0),
+                class,
+            ));
+        }
+        let points = decimate(&cloud, 1_000);
+        let buildings = points
+            .chunks_exact(4)
+            .filter(|p| p[3] == PointClass::Building.code() as f32)
+            .count();
+        assert!(buildings > 50, "зданий в превью: {buildings}");
     }
 
     #[test]

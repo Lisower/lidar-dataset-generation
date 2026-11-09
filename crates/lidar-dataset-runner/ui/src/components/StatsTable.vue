@@ -8,7 +8,10 @@ import { copyText, objectSummaryText, placedLessThanRequested } from "../lib/res
 const props = defineProps<{
   report: RunReport | null;
   classes: ClassDto[];
+  activeIndex?: number | null;
 }>();
+
+const emit = defineEmits<{ (e: "select-scene", index: number): void }>();
 
 const scenes = computed<SceneStats[]>(() => props.report?.scenes ?? []);
 
@@ -88,7 +91,18 @@ const hiddenErrors = computed(() => props.report?.errors.slice(5) ?? []);
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in scenes" :key="row.index">
+            <tr
+              v-for="row in scenes"
+              :key="row.index"
+              class="scene-row"
+              :class="{ active: activeIndex === row.index }"
+              role="button"
+              tabindex="0"
+              :title="`Показать сцену #${row.index} в просмотре`"
+              @click="emit('select-scene', row.index)"
+              @keydown.enter.prevent="emit('select-scene', row.index)"
+              @keydown.space.prevent="emit('select-scene', row.index)"
+            >
               <td class="sticky">{{ row.index }}</td>
               <td class="numeric">{{ row.seed }}</td>
               <td class="numeric">{{ formatPoints(row.points) }}</td>
@@ -227,6 +241,18 @@ td {
 
 .objects.short {
   color: var(--warn);
+}
+
+.scene-row {
+  cursor: pointer;
+}
+
+.scene-row:hover td {
+  background: var(--surface-2);
+}
+
+.scene-row.active td {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .totals td {

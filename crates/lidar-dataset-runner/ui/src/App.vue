@@ -181,6 +181,11 @@ function setPreviewIndex(value: number) {
   }
 }
 
+function showScene(index: number) {
+  previewIndex.value = index;
+  void loadPreview();
+}
+
 async function cancel() {
   if (!jobId.value) {
     return;
@@ -248,6 +253,11 @@ onMounted(async () => {
       report.value = finished;
       jobId.value = null;
       state.value = finished.cancelled ? "cancelled" : "finished";
+      const first = finished.scenes[0];
+      if (first) {
+        previewIndex.value = first.index;
+        void loadPreview();
+      }
     }),
   );
 });
@@ -326,7 +336,12 @@ onUnmounted(() => {
             :state="state"
             @cancel="cancel"
           />
-          <StatsTable :report="report" :classes="classes" />
+          <StatsTable
+            :report="report"
+            :classes="classes"
+            :active-index="previewIndex"
+            @select-scene="showScene"
+          />
         </div>
 
         <div class="actions-bar">
