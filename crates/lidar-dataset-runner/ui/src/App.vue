@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Play, RotateCcw } from "lucide-vue-next";
 import RecipeForm from "./components/RecipeForm.vue";
 import StatusPill from "./components/StatusPill.vue";
-import CancelButton from "./components/CancelButton.vue";
 import RunProgress from "./components/RunProgress.vue";
 import StatsTable from "./components/StatsTable.vue";
 import { type RunState } from "./lib/labels";
@@ -161,12 +160,21 @@ function scheduleDraftSave() {
   }
   draftTimer = setTimeout(() => {
     draftTimer = null;
+    if (state.value === "running") {
+      return;
+    }
     const draft: Draft = { recipe: recipe.value, outputDir: outputDir.value };
     saveDraft(draft);
   }, 300);
 }
 
 watch([recipe, outputDir], scheduleDraftSave, { deep: true });
+
+watch(state, (value) => {
+  if (value !== "running") {
+    scheduleDraftSave();
+  }
+});
 
 async function resetRecipe() {
   if (draftTimer !== null) {
@@ -176,6 +184,10 @@ async function resetRecipe() {
   clearDraft();
   recipe.value = structuredClone(DEFAULT_RECIPE);
   issues.value = [];
+  failure.value = "";
+  progress.value = null;
+  report.value = null;
+  state.value = "idle";
   await loadCatalog();
   outputDir.value = await getDefaultOutputDir();
 }
@@ -239,7 +251,6 @@ onUnmounted(() => {
       <div class="app-form">
         <RecipeForm
           :catalog="catalog"
-          :presets-root="presetsRoot"
           :recipe="recipe"
           :output-dir="outputDir"
           :issues="issues"
@@ -265,7 +276,6 @@ onUnmounted(() => {
             <Play :size="16" aria-hidden="true" />
             Сгенерировать датасет
           </button>
-          <CancelButton :running="running" @cancel="cancel" />
         </div>
       </div>
 
@@ -288,6 +298,7 @@ onUnmounted(() => {
           :scenes-total="recipe.scenes"
           :classes="classes"
           :running="running"
+          :state="state"
           @cancel="cancel"
         />
         <StatsTable :report="report" :classes="classes" />
@@ -355,13 +366,13 @@ onUnmounted(() => {
 
 .app-main {
   flex: 1;
-  height: calc(100vh - 72px);
+  min-height: 0;
   overflow: auto;
   display: grid;
   grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
   gap: var(--space-5);
   align-items: start;
-  padding: var(--space-4);
+  padding: var(--space-4) var(--space-4) 0;
 }
 
 .app-form {
@@ -378,6 +389,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
+  margin: 0 calc(-1 * var(--space-4));
   background: var(--surface);
   border-top: 1px solid var(--border);
   padding: var(--space-3) var(--space-4);
@@ -388,6 +400,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--space-4);
   min-width: 0;
+  padding-bottom: var(--space-4);
 }
 
 .empty-state {

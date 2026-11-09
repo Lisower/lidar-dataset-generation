@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { ClassDto, ProgressEvent } from "../api";
+import type { RunState } from "../lib/labels";
 import { etaMs, formatDuration, formatPoints, percent, pluralRu } from "../lib/format";
 import CancelButton from "./CancelButton.vue";
 
@@ -9,6 +10,7 @@ const props = defineProps<{
   scenesTotal: number;
   classes: ClassDto[];
   running: boolean;
+  state?: RunState;
 }>();
 
 const emit = defineEmits<{ (e: "cancel"): void }>();
@@ -73,6 +75,8 @@ const classRows = computed(() => {
       Осталось примерно {{ formatDuration(eta) }}
     </p>
     <p v-else-if="running" class="estimate muted">Считаем первую сцену…</p>
+    <p v-else-if="progress && state === 'cancelled'" class="estimate">Остановлено</p>
+    <p v-else-if="progress && state === 'failed'" class="estimate">Запуск прерван</p>
     <p v-else-if="progress" class="estimate">Готово за {{ formatDuration(elapsedMs) }}</p>
 
     <div v-if="running && !progress" class="first-scene">

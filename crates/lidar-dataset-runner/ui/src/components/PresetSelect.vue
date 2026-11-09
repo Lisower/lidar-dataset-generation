@@ -9,8 +9,9 @@ const props = withDefaults(
     modelValue: string;
     disabled?: boolean;
     emptyText?: string;
+    describedBy?: string;
   }>(),
-  { disabled: false, emptyText: "нет доступных пресетов" },
+  { disabled: false, emptyText: "нет доступных пресетов", describedBy: undefined },
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
@@ -26,9 +27,17 @@ function onChange(event: Event) {
 
 <template>
   <div class="preset">
-    <p v-if="presets.length === 0" class="preset-empty muted">{{ emptyText }}</p>
+    <p v-if="presets.length === 0" :id="id" class="preset-empty muted" tabindex="-1">
+      {{ emptyText }}
+    </p>
     <template v-else>
-      <select :id="id" :disabled="disabled" :value="modelValue" @change="onChange">
+      <select
+        :id="id"
+        :disabled="disabled"
+        :aria-describedby="describedBy"
+        :value="modelValue"
+        @change="onChange"
+      >
         <option v-for="preset in presets" :key="preset.id" :value="preset.id">
           {{ preset.name }}
         </option>

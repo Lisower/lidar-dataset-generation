@@ -32,4 +32,20 @@ describe("PresetSelect", () => {
     expect(wrapper.find("select").exists()).toBe(false);
     expect(wrapper.text()).toContain("в каталоге нет деревьев");
   });
+
+  it("keeps the empty state focusable so the error summary can reach it", () => {
+    const wrapper = mount(PresetSelect, {
+      props: { id: "field-landscape", presets: [], modelValue: "" },
+    });
+    const empty = wrapper.find("#field-landscape");
+    expect(empty.exists()).toBe(true);
+    expect(empty.attributes("tabindex")).toBe("-1");
+  });
+
+  it("points assistive technology at the field hint", () => {
+    const wrapper = mount(PresetSelect, {
+      props: { id: "x", presets, modelValue: "spruce", describedBy: "hint-landscape" },
+    });
+    expect(wrapper.find("select").attributes("aria-describedby")).toBe("hint-landscape");
+  });
 });

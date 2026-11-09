@@ -59,6 +59,14 @@ describe("RunProgress", () => {
     expect(wrapper.text()).not.toContain("Готовим первую сцену");
   });
 
+  it("never claims a finished run after it was stopped", () => {
+    const wrapper = mount(RunProgress, {
+      props: { progress, scenesTotal: 10, classes, running: false, state: "cancelled" },
+    });
+    expect(wrapper.text()).not.toContain("Готово за");
+    expect(wrapper.text()).toContain("2 из 10 сцен");
+  });
+
   it("lets the user stop the run", async () => {
     const wrapper = mount(RunProgress, {
       props: { progress: null, scenesTotal: 10, classes, running: true },

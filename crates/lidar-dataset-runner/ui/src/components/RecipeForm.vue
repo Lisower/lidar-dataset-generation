@@ -15,7 +15,6 @@ import { ELEMENT_HINT, ELEMENT_TITLE, FIELD_HINT, PLACEMENT_NOTE } from "../lib/
 
 const props = defineProps<{
   catalog: Catalog;
-  presetsRoot: string | null;
   recipe: Recipe;
   outputDir: string;
   issues: ValidationIssue[];
@@ -134,7 +133,7 @@ function fieldIdFor(field: string): string {
     return "field-output";
   }
   if (field === "elements") {
-    return "field-element-building";
+    return `field-element-${firstElementKind()}-count`;
   }
   const match = /^elements\[(\d+)\](?:\.(\w+))?$/.exec(field);
   if (match) {
@@ -146,6 +145,10 @@ function fieldIdFor(field: string): string {
     }
   }
   return field;
+}
+
+function firstElementKind(): ElementKind {
+  return recipes.value.elements[0]?.kind ?? "building";
 }
 
 function focusField(field: string) {
@@ -165,6 +168,7 @@ function focusField(field: string) {
           <label for="field-scenes">Сцен</label>
           <input
             id="field-scenes"
+            aria-describedby="hint-scenes"
             type="number"
             min="1"
             max="1000"
@@ -179,6 +183,7 @@ function focusField(field: string) {
           <label for="field-seed">Сидовое число</label>
           <input
             id="field-seed"
+            aria-describedby="hint-seed"
             type="number"
             min="0"
             :value="recipe.seed"
@@ -192,6 +197,7 @@ function focusField(field: string) {
           <label for="field-slope">Максимальный уклон, °</label>
           <input
             id="field-slope"
+            aria-describedby="hint-slope"
             type="number"
             min="1"
             max="45"
@@ -215,6 +221,7 @@ function focusField(field: string) {
           :presets="catalog.landscapes"
           :model-value="recipe.landscape"
           :disabled="running"
+          described-by="hint-landscape"
           empty-text="в каталоге нет рельефов"
           @update:model-value="setLandscape"
         />
@@ -236,11 +243,14 @@ function focusField(field: string) {
             :presets="presetsFor(kind)"
             :model-value="element(kind).presetId"
             :disabled="running"
+            :described-by="`hint-element-${kind}`"
             empty-text="нет доступных пресетов"
             @update:model-value="setPreset(kind, $event)"
           />
           <input
             :id="`field-element-${kind}-count`"
+            :aria-describedby="`hint-element-${kind}`"
+            :aria-label="`Количество: ${ELEMENT_TITLE[kind]}`"
             class="count"
             type="number"
             min="0"
@@ -257,7 +267,7 @@ function focusField(field: string) {
         />
       </div>
 
-      <FieldHint id="hint-elements" text="" :error="issueFor('elements')" />
+      <FieldHint v-if="issueFor('elements')" id="hint-elements" text="" :error="issueFor('elements')" />
 
       <p class="note muted">{{ PLACEMENT_NOTE }}</p>
     </fieldset>
@@ -270,6 +280,7 @@ function focusField(field: string) {
         <div class="output-row">
           <input
             id="field-output"
+            aria-describedby="hint-output"
             type="text"
             :value="outputDir"
             :disabled="running"
