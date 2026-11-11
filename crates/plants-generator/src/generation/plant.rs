@@ -124,6 +124,14 @@ impl Plant {
                     sides,
                     axis,
                 )
+            } else if config.preset == PlantPreset::Oak && end.level == 0 {
+                oak_trunk_polygons(
+                    r0,
+                    r1,
+                    height,
+                    sides,
+                    axis,
+                )
             } else {
                 cone_side_polygons(r0, r1, height, sides, axis)
             };
@@ -596,6 +604,96 @@ fn yucca_trunk_polygons(
 
         let p1 = bottom_center
             + (u * a1.cos() + v * a1.sin()) * r0;
+
+        polys.push(
+            Polygon::triangle(bottom_center, p0, p1)
+                .oriented(-axis),
+        );
+    }
+
+    polys
+}
+
+/// Массивный ствол дуба с расширенным комлем и лёгкой неровностью поверхности.
+fn oak_trunk_polygons(
+    r0: f32,
+    r1: f32,
+    height: f32,
+    sides: usize,
+    axis: Vec3,
+) -> Vec<Polygon> {
+    let (u, v) = basis(axis);
+
+    let sides = sides.max(12);
+    let rings = 8usize;
+    let angle_step = std::f32::consts::TAU / sides as f32;
+
+    let mut polys = Vec::new();
+
+    for ring in 0..rings {
+        let t0 = ring as f32 / rings as f32;
+        let t1 = (ring + 1) as f32 / rings as f32;
+
+        let z0 = -height * 0.5 + height * t0;
+        let z1 = -height * 0.5 + height * t1;
+
+        // У дуба выраженный широкий комель.
+        // Выше ствол постепенно переходит к обычному радиусу.
+        let flare0 = 1.0 + 0.42 * (1.0 - t0).powf(4.0);
+        let flare1 = 1.0 + 0.42 * (1.0 - t1).powf(4.0);
+
+        let base_r0 = (r0 * (1.0 - t0) + r1 * t0) * flare0;
+        let base_r1 = (r0 * (1.0 - t1) + r1 * t1) * flare1;
+
+        for i in 0..sides {
+            let next = (i + 1) % sides;
+
+            let a0 = angle_step * i as f32;
+            let a1 = angle_step * next as f32;
+
+            let c0 = u * a0.cos() + v * a0.sin();
+            let c1 = u * a1.cos() + v * a1.sin();
+
+            // Небольшая нерегулярность делает ствол менее цилиндрическим.
+            let relief00 =
+                1.0 + 0.055 * (a0 * 3.0 + ring as f32 * 1.35).sin();
+            let relief01 =
+                1.0 + 0.055 * (a1 * 3.0 + ring as f32 * 1.35).sin();
+
+            let relief10 =
+                1.0 + 0.055 * (a0 * 3.0 + (ring + 1) as f32 * 1.35).sin();
+            let relief11 =
+                1.0 + 0.055 * (a1 * 3.0 + (ring + 1) as f32 * 1.35).sin();
+
+            let b0 = c0 * (base_r0 * relief00) + axis * z0;
+            let b1 = c1 * (base_r0 * relief01) + axis * z0;
+
+            let t0p = c0 * (base_r1 * relief10) + axis * z1;
+            let t1p = c1 * (base_r1 * relief11) + axis * z1;
+
+            let outward = (c0 + c1).normalize_or_zero();
+
+            polys.push(
+                Polygon::quad(b0, b1, t1p, t0p)
+                    .oriented(outward),
+            );
+        }
+    }
+
+    // Закрываем основание ствола.
+    let bottom_center = -axis * (height * 0.5);
+    let bottom_radius = r0 * 1.42;
+
+    for i in 0..sides {
+        let next = (i + 1) % sides;
+
+        let a0 = angle_step * i as f32;
+        let a1 = angle_step * next as f32;
+
+        let p0 =
+            bottom_center + (u * a0.cos() + v * a0.sin()) * bottom_radius;
+        let p1 =
+            bottom_center + (u * a1.cos() + v * a1.sin()) * bottom_radius;
 
         polys.push(
             Polygon::triangle(bottom_center, p0, p1)

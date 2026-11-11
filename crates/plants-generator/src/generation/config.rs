@@ -66,6 +66,8 @@ pub enum PlantPreset {
     Yucca,
     /// Агава: низкая прикорневая розетка из толстых мясистых заострённых листьев.
     Agave,
+    /// Дуб: мощное лиственное дерево с толстым стволом и широкой раскидистой кроной.
+    Oak,
     /// Куст: густая листва от самой земли.
     Bush,
     /// Можжевельник: низкий раскидистый хвойный кустарник с густой кроной.
@@ -78,7 +80,7 @@ pub enum PlantPreset {
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::DeciduousTree,
         Self::Spruce,
         Self::Fir,
@@ -90,6 +92,7 @@ impl PlantPreset {
         Self::CactusSmall,
         Self::Yucca,
         Self::Agave,
+        Self::Oak,
         Self::Bush,
         Self::Juniper,
         Self::TallGrass,
@@ -110,6 +113,7 @@ impl PlantPreset {
             Self::CactusSmall => "кактус маленький",
             Self::Yucca => "юкка",
             Self::Agave => "агава",
+            Self::Oak => "дуб",
             Self::Bush => "куст",
             Self::Juniper => "можжевельник",
             Self::TallGrass => "высокая трава",
@@ -128,7 +132,8 @@ impl PlantPreset {
             | Self::Palm
             | Self::PalmCoconuts
             | Self::CactusLarge
-            | Self::Yucca => PlantType::Tree,
+            | Self::Yucca
+            | Self::Oak => PlantType::Tree,
             Self::CactusSmall | Self::Agave | Self::Bush | Self::Juniper => PlantType::Bush,
             Self::TallGrass | Self::SparseGrass => PlantType::Grass,
         }
@@ -150,6 +155,7 @@ impl PlantPreset {
             Self::CactusSmall => "cactus-small",
             Self::Yucca => "yucca",
             Self::Agave => "agave",
+            Self::Oak => "oak",
             Self::Bush => "bush",
             Self::Juniper => "juniper",
             Self::TallGrass => "tall-grass",
@@ -179,6 +185,7 @@ impl PlantPreset {
             "cactussmall" | "cactus-small" | "кактус маленький" => Some(Self::CactusSmall),
             "yucca" | "юкка" => Some(Self::Yucca),
             "agave" | "агава" => Some(Self::Agave),
+            "oak" | "дуб" => Some(Self::Oak),
             "bush" | "куст" => Some(Self::Bush),
             "juniper" | "можжевельник" => Some(Self::Juniper),
             "tallgrass" | "высокая трава" | "трава" => Some(Self::TallGrass),

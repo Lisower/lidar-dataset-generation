@@ -31,7 +31,9 @@ pub struct Foliage {
 
 /// Построить крону растения из скелета (детерминированно от seed).
 pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage {
-    if config.preset == PlantPreset::Spruce {
+    if config.preset == PlantPreset::Oak {
+        build_oak_leaves(skeleton, config)
+    } else if config.preset == PlantPreset::Spruce {
         build_spruce_needles(skeleton, config)
     } else if config.preset == PlantPreset::Juniper {
         build_juniper_needles(skeleton, config)
@@ -51,6 +53,158 @@ pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage 
     } else {
         build_leafy(skeleton, config)
     }
+}
+
+/// Плотная крона дуба.
+///
+/// Листва располагается не только на самых концах ветвей,
+/// а вдоль тонких ветвей верхней части скелета.
+/// Толстые основные ветви и ствол остаются хорошо видимыми.
+fn build_oak_leaves(
+    skeleton: &PlantSkeleton,
+    config: &PlantConfig,
+) -> Foliage {
+    let mut foliage = Foliage::default();
+    let mut rng = config.seed.with_label("oak_leaves").rng();
+    let cfg = &config.foliage;
+
+    for segment in &skeleton.segments {
+        let from = skeleton.points[segment.from];
+        let to = skeleton.points[segment.to];
+
+        // На ствол и крупные скелетные ветви листья не ставим.
+        // Листва начинается только на более мелком ветвлении.
+        if to.level < 3 {
+            continue;
+        }
+
+        let branch = to.position - from.position;
+        let length = branch.length();
+
+        if length <= 0.001 {
+            continue;
+        }
+
+        let dir = branch.normalize();
+
+        // Чем тоньше ветвь, тем плотнее на ней листва.
+        // На промежуточных ветвях оставляем немного зелени,
+        // а концы кроны заполняем значительно плотнее.
+        let density = if to.level >= 5 {
+            0.08_f32
+        } else if to.level == 4 {
+            0.11_f32
+        } else {
+            0.11_f32
+        };
+
+        let anchors =
+            ((length / density).ceil() as usize).clamp(1, 8);
+
+        for anchor_index in 0..anchors {
+            let t =
+                (anchor_index as f32 + 0.5) / anchors as f32;
+
+            let center = from.position + branch * t;
+
+            // Строим локальный базис вокруг ветви.
+            let side0 = dir.cross(Vec3::Z).normalize_or_zero();
+
+            let side0 = if side0 == Vec3::ZERO {
+                Vec3::X
+            } else {
+                side0
+            };
+
+            let pitch =
+                dir.cross(side0).normalize_or_zero();
+
+            // На молодых веточках формируем небольшие группы листьев.
+            let leaves_here = if to.level >= 5 {
+                5usize
+            } else if to.level == 4 {
+                12usize
+            } else {
+                10usize
+            };
+
+            for leaf_index in 0..leaves_here {
+                let angle =
+                    leaf_index as f32
+                        * std::f32::consts::TAU
+                        / leaves_here as f32
+                        + rng.random_range(-0.45_f32..=0.45_f32);
+
+                let radial =
+                    side0 * angle.cos()
+                        + pitch * angle.sin();
+
+                // Листья немного отнесены от самой ветки,
+                // поэтому образуют объёмные зелёные массы.
+                let offset =
+                    rng.random_range(0.20_f32..=0.75_f32);
+
+                let along =
+                    rng.random_range(-0.85_f32..=0.85_f32);
+
+                let center =
+                    center
+                        + radial * offset
+                        + dir * along;
+
+                let outward =
+                    (
+                        radial * 0.70
+                            + dir * rng.random_range(0.15_f32..=0.40_f32)
+                            + Vec3::Z * rng.random_range(-0.10_f32..=0.25_f32)
+                    )
+                    .normalize_or_zero();
+
+                let leaf_length =
+                    cfg.length
+                        * rng.random_range(0.85_f32..=1.15_f32);
+
+                let leaf_width =
+                    cfg.width
+                        * rng.random_range(0.85_f32..=1.15_f32);
+
+                let tangent =
+                    outward.cross(dir).normalize_or_zero();
+
+                let tangent = if tangent == Vec3::ZERO {
+                    side0
+                } else {
+                    tangent
+                };
+
+                let c0 =
+                    center + outward * leaf_length;
+
+                let c1 =
+                    center + tangent * leaf_width * 0.5;
+
+                let c2 =
+                    center - outward * leaf_length * 0.30;
+
+                let c3 =
+                    center - tangent * leaf_width * 0.5;
+
+                let [c0, c1, c2, c3] =
+                    on_ground([c0, c1, c2, c3]);
+
+                foliage.faces.push(
+                    Polygon::quad(c0, c1, c2, c3),
+                );
+
+                foliage.cloud.push(c0);
+                foliage.cloud.push(center);
+
+                foliage.count += 1;
+            }
+        }
+    }
+
+    foliage
 }
 
 /// Хвоя ели.

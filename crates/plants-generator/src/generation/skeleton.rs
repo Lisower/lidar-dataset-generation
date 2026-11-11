@@ -76,6 +76,9 @@ impl PlantSkeleton {
         if config.preset == PlantPreset::Agave {
             return Self::build_agave(config);
         }
+        if config.preset == PlantPreset::Oak {
+            return Self::build_oak(config);
+        }
         let mut rng = config.seed.with_label("skeleton").rng();
 
         let mut skeleton = Self::default();
@@ -631,6 +634,405 @@ impl PlantSkeleton {
     skeleton.height = 0.75;
     skeleton.ground_radius = 0.95;
 
+    skeleton
+}
+
+/// Специальное построение дуба:
+/// мощный ствол и плотная округлая крона с ветвями,
+/// распределёнными по всей её высоте.
+fn build_oak(config: &PlantConfig) -> Self {
+    let mut rng = config.seed.with_label("oak_skeleton").rng();
+    let mut skeleton = Self::default();
+
+    let total_height = rng.random_range(10.5_f32..=12.0_f32);
+    let trunk_radius = rng.random_range(0.58_f32..=0.76_f32);
+
+    // Основание ствола.
+    skeleton.points.push(SkeletonPoint {
+        position: Vec3::ZERO,
+        level: 0,
+        branch_id: 0,
+        radius: trunk_radius,
+        taper: 1.0,
+        children_count: 1,
+    });
+
+    // Ствол доходит внутрь кроны.
+    // Ветки будут крепиться к нему на разных высотах.
+    let trunk_levels = 7usize;
+    let crown_start = total_height * 0.30;
+    let trunk_top = total_height * 0.78;
+
+    let mut trunk_points = Vec::new();
+    let mut previous = 0usize;
+
+    for i in 0..trunk_levels {
+        let t = i as f32 / (trunk_levels - 1) as f32;
+        let z = crown_start + (trunk_top - crown_start) * t;
+
+        let sway = if i == 0 {
+            Vec3::ZERO
+        } else {
+            Vec3::new(
+                rng.random_range(-0.12_f32..=0.12_f32),
+                rng.random_range(-0.12_f32..=0.12_f32),
+                0.0,
+            )
+        };
+
+        let idx = skeleton.points.len();
+
+        skeleton.points.push(SkeletonPoint {
+            position: Vec3::new(sway.x, sway.y, z),
+            level: 0,
+            branch_id: 0,
+            radius: trunk_radius * (0.72 - t * 0.42),
+            taper: 0.88,
+            children_count: 0,
+        });
+
+        skeleton.segments.push(SkeletonSegment {
+            from: previous,
+            to: idx,
+        });
+
+        trunk_points.push(idx);
+        previous = idx;
+    }
+
+    // На каждом уровне ствола создаём несколько скелетных ветвей.
+    // За счёт этого листва заполняет не только верх, но и середину/низ кроны.
+    for (level_index, &start_idx) in trunk_points.iter().enumerate() {
+        let start = skeleton.points[start_idx].position;
+
+        let branch_count = match level_index {
+            0 => 5usize,
+            1 => 6usize,
+            2 => 6usize,
+            3 => 6usize,
+            4 => 5usize,
+            5 => 5usize,
+            _ => 4usize,
+        };
+
+        let level_offset =
+            level_index as f32 * 31.0
+                + rng.random_range(-15.0_f32..=15.0_f32);
+
+        let mut children_added = 0usize;
+
+        for branch_index in 0..branch_count {
+            if skeleton.points.len() >= config.max_branches {
+                break;
+            }
+
+            let azimuth =
+                level_offset
+                    + branch_index as f32
+                        * (360.0 / branch_count as f32)
+                    + rng.random_range(-12.0_f32..=12.0_f32);
+
+            let h = azimuth.to_radians();
+
+            let horizontal = match level_index {
+                // Нижняя часть кроны — самые мощные и широко раскинутые ветви.
+                0 => rng.random_range(3.8_f32..=4.8_f32),
+                1 => rng.random_range(4.2_f32..=5.2_f32),
+
+                // Максимальная ширина взрослого дуба приходится
+                // примерно на нижнюю/среднюю часть кроны.
+                2 => rng.random_range(4.5_f32..=5.5_f32),
+                3 => rng.random_range(4.2_f32..=5.2_f32),
+
+                // Выше крона постепенно сужается.
+                4 => rng.random_range(3.6_f32..=4.6_f32),
+                5 => rng.random_range(3.0_f32..=4.0_f32),
+                _ => rng.random_range(2.2_f32..=3.2_f32),
+            };
+
+            let rise = if level_index <= 1 {
+                rng.random_range(0.7_f32..=1.5_f32)
+            } else if level_index <= 4 {
+                rng.random_range(1.0_f32..=2.0_f32)
+            } else {
+                rng.random_range(1.3_f32..=2.3_f32)
+            };
+
+            // Основная ветвь из двух сегментов.
+            // Так она остаётся мощной, но не образует длинную голую "палку".
+            let middle_horizontal = horizontal * 0.52;
+            let middle_rise = rise * 0.45;
+
+            let middle_position =
+                start
+                    + Vec3::new(
+                        middle_horizontal * h.cos(),
+                        middle_horizontal * h.sin(),
+                        middle_rise,
+                    );
+
+            let middle_idx = skeleton.points.len();
+
+            skeleton.points.push(SkeletonPoint {
+                position: middle_position,
+                level: 1,
+                branch_id: branch_index + 1,
+                radius: trunk_radius
+                    * rng.random_range(0.20_f32..=0.30_f32),
+                taper: 0.80,
+                children_count: 1,
+            });
+
+            skeleton.segments.push(SkeletonSegment {
+                from: start_idx,
+                to: middle_idx,
+            });
+
+            let end_angle =
+                h + rng.random_range(-8.0_f32..=8.0_f32).to_radians();
+
+            let end_position =
+                middle_position
+                    + Vec3::new(
+                        (horizontal - middle_horizontal) * end_angle.cos(),
+                        (horizontal - middle_horizontal) * end_angle.sin(),
+                        rise - middle_rise,
+                    );
+
+            let end_idx = skeleton.points.len();
+
+            skeleton.points.push(SkeletonPoint {
+                position: end_position,
+                level: 1,
+                branch_id: branch_index + 1,
+                radius: trunk_radius
+                    * rng.random_range(0.12_f32..=0.19_f32),
+                taper: 0.76,
+                children_count: 0,
+            });
+
+            skeleton.segments.push(SkeletonSegment {
+                from: middle_idx,
+                to: end_idx,
+            });
+
+            // Вторичные ветви начинаются и от середины,
+            // и от конца основной ветви.
+            // Это заполняет пустоты вокруг крупных веток.
+            for &(parent_idx, parent_position, secondary_amount) in &[
+                (middle_idx, middle_position, 4usize),
+                (end_idx, end_position, 6usize),
+            ] {
+                let mut secondary_added = 0usize;
+
+                for secondary_index in 0..secondary_amount {
+                    if skeleton.points.len() >= config.max_branches {
+                        break;
+                    }
+
+                    let side =
+                        secondary_index as f32
+                            - (secondary_amount as f32 - 1.0) * 0.5;
+
+                    let secondary_angle =
+                        azimuth
+                            + side * rng.random_range(18.0_f32..=28.0_f32)
+                            + rng.random_range(-12.0_f32..=12.0_f32);
+
+                    let sh = secondary_angle.to_radians();
+
+                    let secondary_horizontal =
+                        rng.random_range(0.75_f32..=1.45_f32);
+
+                    // Часть веточек идёт чуть вниз/в стороны,
+                    // часть вверх — крона получается объёмной, а не плоской.
+                    let secondary_vertical =
+                        rng.random_range(-0.25_f32..=0.85_f32);
+
+                    let secondary_end =
+                        parent_position
+                            + Vec3::new(
+                                secondary_horizontal * sh.cos(),
+                                secondary_horizontal * sh.sin(),
+                                secondary_vertical,
+                            );
+
+                    let secondary_idx = skeleton.points.len();
+
+                    skeleton.points.push(SkeletonPoint {
+                        position: secondary_end,
+                        level: 2,
+                        branch_id: secondary_index + 1,
+                        radius: rng.random_range(0.045_f32..=0.085_f32),
+                        taper: 0.72,
+                        children_count: 0,
+                    });
+
+                    skeleton.segments.push(SkeletonSegment {
+                        from: parent_idx,
+                        to: secondary_idx,
+                    });
+
+                    // Короткие терминальные побеги создают плотную массу листвы.
+                    let twig_count = rng.random_range(4usize..=6usize);
+                    let mut twigs_added = 0usize;
+
+                    for twig_index in 0..twig_count {
+                        if skeleton.points.len() >= config.max_branches {
+                            break;
+                        }
+
+                        let twig_angle =
+                            secondary_angle
+                                + (twig_index as f32
+                                    - (twig_count as f32 - 1.0) * 0.5)
+                                    * rng.random_range(18.0_f32..=30.0_f32);
+
+                        let th = twig_angle.to_radians();
+
+                        let twig_horizontal =
+                            rng.random_range(0.30_f32..=0.65_f32);
+
+                        let twig_vertical =
+                            rng.random_range(-0.12_f32..=0.45_f32);
+
+                        let twig_end =
+                            secondary_end
+                                + Vec3::new(
+                                    twig_horizontal * th.cos(),
+                                    twig_horizontal * th.sin(),
+                                    twig_vertical,
+                                );
+
+                        let twig_idx = skeleton.points.len();
+
+                        skeleton.points.push(SkeletonPoint {
+                            position: twig_end,
+                            level: 3,
+                            branch_id: twig_index + 1,
+                            radius: rng.random_range(0.018_f32..=0.035_f32),
+                            taper: 0.66,
+                            children_count: 0,
+                        });
+
+                        skeleton.segments.push(SkeletonSegment {
+                            from: secondary_idx,
+                            to: twig_idx,
+                        });
+
+                        twigs_added += 1;
+                    }
+
+                    skeleton.points[secondary_idx].children_count =
+                        twigs_added;
+
+                    secondary_added += 1;
+                }
+
+                skeleton.points[parent_idx].children_count =
+                    secondary_added;
+            }
+
+            children_added += 1;
+        }
+
+        skeleton.points[start_idx].children_count =
+            children_added + if level_index + 1 < trunk_levels { 1 } else { 0 };
+    }
+
+    // Верхняя центральная масса кроны.
+    // Она закрывает визуальную "дыру" над стволом.
+    let top_start = *trunk_points.last().unwrap();
+    let top_position = skeleton.points[top_start].position;
+
+    let top_count = 8usize;
+
+    for top_index in 0..top_count {
+        if skeleton.points.len() >= config.max_branches {
+            break;
+        }
+
+        let azimuth =
+            top_index as f32 * (360.0 / top_count as f32)
+                + rng.random_range(-12.0_f32..=12.0_f32);
+
+        let h = azimuth.to_radians();
+
+        let horizontal =
+            rng.random_range(0.8_f32..=1.8_f32);
+
+        let vertical =
+            rng.random_range(1.8_f32..=3.0_f32);
+
+        let end =
+            top_position
+                + Vec3::new(
+                    horizontal * h.cos(),
+                    horizontal * h.sin(),
+                    vertical,
+                );
+
+        let idx = skeleton.points.len();
+
+        skeleton.points.push(SkeletonPoint {
+            position: end,
+            level: 2,
+            branch_id: top_index + 1,
+            radius: rng.random_range(0.06_f32..=0.10_f32),
+            taper: 0.70,
+            children_count: 0,
+        });
+
+        skeleton.segments.push(SkeletonSegment {
+            from: top_start,
+            to: idx,
+        });
+
+        let twig_count = 6usize;
+        let mut added = 0usize;
+
+        for twig_index in 0..twig_count {
+            if skeleton.points.len() >= config.max_branches {
+                break;
+            }
+
+            let spread =
+                (twig_index as f32 - 2.5)
+                    * rng.random_range(20.0_f32..=28.0_f32);
+
+            let th = (azimuth + spread).to_radians();
+
+            let twig_end =
+                end
+                    + Vec3::new(
+                        rng.random_range(0.30_f32..=0.65_f32) * th.cos(),
+                        rng.random_range(0.30_f32..=0.65_f32) * th.sin(),
+                        rng.random_range(-0.05_f32..=0.45_f32),
+                    );
+
+            let twig_idx = skeleton.points.len();
+
+            skeleton.points.push(SkeletonPoint {
+                position: twig_end,
+                level: 3,
+                branch_id: twig_index + 1,
+                radius: rng.random_range(0.018_f32..=0.032_f32),
+                taper: 0.65,
+                children_count: 0,
+            });
+
+            skeleton.segments.push(SkeletonSegment {
+                from: idx,
+                to: twig_idx,
+            });
+
+            added += 1;
+        }
+
+        skeleton.points[idx].children_count = added;
+    }
+
+    Self::finish(&mut skeleton);
     skeleton
 }
 
