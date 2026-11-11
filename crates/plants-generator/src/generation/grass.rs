@@ -12,7 +12,7 @@ use rand::RngExt;
 use generation_core::geometry::Polygon;
 use generation_core::{PointCloud, Seed};
 
-use super::config::PlantConfig;
+use super::config::{PlantConfig, PlantPreset};
 use super::part::Part;
 
 /// Один пучок травы (одиночный объект или элемент поля).
@@ -43,6 +43,9 @@ pub struct PlacedTuft {
 
 /// Сгенерировать пучок травы по конфигурации (детерминированно от `seed`).
 pub fn generate_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
+    if config.preset == PlantPreset::Wheat {
+        return generate_wheat_tuft(config, seed);
+    }
     let mut rng = seed.with_label("tuft").rng();
     let g = &config.grass;
 
@@ -95,6 +98,165 @@ pub fn generate_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
         part,
         point_cloud,
         height: tuft_height,
+        radius: g.tuft_radius,
+        blade_count,
+    }
+}
+
+/// Сгенерировать пучок пшеницы: тонкие стебли с колосьями.
+fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
+    let mut rng = seed.with_label("wheat_tuft").rng();
+    let g = &config.grass;
+
+    let blade_count = rng.random_range(g.blades_min..=g.blades_max);
+    let tuft_height = rng.random_range(g.tuft_height_min..=g.tuft_height_max);
+
+    let mut faces: Vec<Polygon> = Vec::with_capacity(blade_count * 10);
+
+    for i in 0..blade_count {
+        let angle = std::f32::consts::TAU * i as f32 / blade_count as f32
+            + rng.random_range(-0.35..0.35);
+
+        let dist =
+            rng.random_range(0.0f32..1.0).sqrt() * g.tuft_radius.max(0.01);
+
+        let base = Vec3::new(
+            angle.cos() * dist,
+            angle.sin() * dist,
+            0.0,
+        );
+
+        let h = tuft_height * rng.random_range(0.82..1.05);
+
+        let lean_angle = angle + rng.random_range(-0.35..0.35);
+        let lean = rng.random_range(0.0..1.0) * g.blade_bend;
+
+        let top = base
+            + Vec3::new(lean_angle.cos(), lean_angle.sin(), 0.0)
+                * (lean * h * 0.25)
+            + Vec3::Z * h;
+
+        // Тонкий вертикальный стебель.
+        let stem_half_width = g.blade_width * 0.5;
+        let perp = Vec3::new(-lean_angle.sin(), lean_angle.cos(), 0.0);
+
+        let s0 = base + perp * stem_half_width;
+        let s1 = base - perp * stem_half_width;
+        let s2 = top - perp * stem_half_width * 0.65;
+        let s3 = top + perp * stem_half_width * 0.65;
+
+        faces.push(
+            Polygon::quad(s0, s1, s2, s3)
+                .oriented(Vec3::Z),
+        );
+
+        // Два узких листа на стебле.
+        for leaf_index in 0..2 {
+            let leaf_height = if leaf_index == 0 { 0.38 } else { 0.58 };
+            let leaf_side = if leaf_index == 0 { 1.0 } else { -1.0 };
+
+            let leaf_base = base
+                + (top - base) * leaf_height;
+
+            let leaf_length = h * rng.random_range(0.10..0.16);
+            let leaf_width = g.blade_width * 1.5;
+
+            let leaf_tip = leaf_base
+                + perp * (leaf_side * leaf_length * 0.45)
+                + Vec3::Z * (leaf_length * 0.55);
+
+            let l0 = leaf_base - perp * leaf_width;
+            let l1 = leaf_base + perp * leaf_width;
+            let l2 = leaf_tip;
+
+            faces.push(
+                Polygon::triangle(l0, l1, l2)
+                    .oriented(Vec3::Z),
+            );
+        }
+
+        // Колос: отдельные колоски располагаются попеременно
+        // по сторонам стебля и сужаются к верхушке.
+        let ear_height = h * rng.random_range(0.14..0.18);
+        let spikelets = 8usize;
+
+        for segment in 0..spikelets {
+            let t = segment as f32 / (spikelets - 1) as f32;
+
+            let center = top + Vec3::Z * (ear_height * t);
+
+            // Нижняя и верхняя части колоса немного уже середины.
+            let shape = (std::f32::consts::PI * t).sin();
+            let spikelet_length =
+                g.blade_width * (1.3 + shape * 1.0);
+
+            let spikelet_height = ear_height * 0.16;
+
+            // Чередуем колоски слева и справа.
+            let side = if segment % 2 == 0 { 1.0 } else { -1.0 };
+
+            let inner = center - perp * (spikelet_length * 0.15 * side);
+            let outer = center + perp * (spikelet_length * side);
+
+            let p0 = inner - Vec3::Z * (spikelet_height * 0.35);
+            let p1 = outer;
+            let p2 = inner + Vec3::Z * spikelet_height;
+
+            faces.push(
+                Polygon::triangle(p0, p1, p2)
+                    .oriented(Vec3::Z),
+            );
+            // Тонкая ость, выходящая из колоска вверх и наружу.
+            let awn_start = outer;
+            let awn_end = outer
+                + perp * (side * g.blade_width * 0.8)
+                + Vec3::Z * (ear_height * 0.32);
+
+            let awn_half_width = g.blade_width * 0.10;
+
+            let a0 = awn_start - perp * awn_half_width;
+            let a1 = awn_start + perp * awn_half_width;
+            let a2 = awn_end + perp * awn_half_width * 0.25;
+            let a3 = awn_end - perp * awn_half_width * 0.25;
+
+            faces.push(
+                Polygon::quad(a0, a1, a2, a3)
+                    .oriented(Vec3::Z),
+            );
+        }
+    }
+
+    let pts = g.tuft_cloud_points.clamp(4, 64);
+    let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
+
+    for _ in 0..pts {
+        let angle = rng.random_range(0.0..std::f32::consts::TAU);
+        let dist =
+            rng.random_range(0.0f32..1.0).sqrt() * g.tuft_radius.max(0.01);
+
+        let height = tuft_height * rng.random_range(0.2..1.15);
+
+        cloud.push(Vec3::new(
+            angle.cos() * dist,
+            angle.sin() * dist,
+            height,
+        ));
+    }
+
+    let part = Part::new(
+        "пшеница",
+        g.color,
+        faces,
+        true,
+        cloud,
+    );
+
+    let point_cloud = part.collect_cloud();
+
+    GrassTuft {
+        part,
+        point_cloud,
+        height: tuft_height * 1.15,
         radius: g.tuft_radius,
         blade_count,
     }
