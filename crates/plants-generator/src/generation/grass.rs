@@ -6,7 +6,10 @@
 //! Так на поле из тысяч пучков облако остаётся «читабельным» для лидара,
 //! а не превращается в сплошную массу.
 
-use bevy::math::{Vec2, Vec3};
+use bevy::{
+    color::Color,
+    math::{Vec2, Vec3},
+};
 use rand::RngExt;
 
 use generation_core::geometry::Polygon;
@@ -46,6 +49,9 @@ pub fn generate_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
     if config.preset == PlantPreset::Wheat {
         return generate_wheat_tuft(config, seed);
     }
+    if config.preset == PlantPreset::Sunflower {
+        return generate_sunflower_tuft(config, seed);
+    }
     let mut rng = seed.with_label("tuft").rng();
     let g = &config.grass;
 
@@ -84,11 +90,17 @@ pub fn generate_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
     // пучка — плотнее к основанию и к центру, чтобы лидар видел «кустик».
     let pts = g.tuft_cloud_points.clamp(4, 64);
     let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
+
     for _ in 0..pts {
         let a = rng.random_range(0.0..std::f32::consts::TAU);
         let dist = rng.random_range(0.0f32..1.0).powf(1.5) * g.tuft_radius.max(0.01);
         let h = tuft_height * rng.random_range(0.15..1.0);
-        cloud.push(Vec3::new(a.cos() * dist, a.sin() * dist, h));
+
+        cloud.push(Vec3::new(
+            a.cos() * dist,
+            a.sin() * dist,
+            h,
+        ));
     }
 
     let part = Part::new("пучок травы", g.color, faces, true, cloud);
@@ -259,6 +271,259 @@ fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
         height: tuft_height * 1.15,
         radius: g.tuft_radius,
         blade_count,
+    }
+}
+
+/// Сгенерировать подсолнечник: высокий стебель, крупные листья
+/// и цветочная корзинка на верхушке.
+fn generate_sunflower_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
+    let mut rng = seed.with_label("sunflower_tuft").rng();
+    let g = &config.grass;
+
+    let height = rng.random_range(g.tuft_height_min..=g.tuft_height_max);
+    // Геометрия подсолнечника разделена по цветам.
+    let mut green_faces: Vec<Polygon> = Vec::new();
+    let mut yellow_faces: Vec<Polygon> = Vec::new();
+    let mut brown_faces: Vec<Polygon> = Vec::new();
+
+    // Подсолнечник слегка отклоняется от вертикали.
+    let lean_angle = rng.random_range(0.0..std::f32::consts::TAU);
+    let lean = g.blade_bend * height * 0.08;
+
+    let base = Vec3::ZERO;
+    let top = Vec3::new(
+        lean_angle.cos() * lean,
+        lean_angle.sin() * lean,
+        height,
+    );
+
+    // Толстый зелёный стебель.
+    // Делаем его крестом из двух плоскостей, чтобы он был заметен
+    // при взгляде с разных направлений.
+    let stem_half_width = g.blade_width * 0.5;
+
+    let dir_a = Vec3::new(1.0, 0.0, 0.0);
+    let dir_b = Vec3::new(0.0, 1.0, 0.0);
+
+    for dir in [dir_a, dir_b] {
+        let b0 = base - dir * stem_half_width;
+        let b1 = base + dir * stem_half_width;
+        let t0 = top + dir * stem_half_width * 0.75;
+        let t1 = top - dir * stem_half_width * 0.75;
+
+        green_faces.push(
+            Polygon::quad(b0, b1, t0, t1)
+                .oriented(Vec3::Z),
+        );
+    }
+
+    let mut sunflower_leaves: Vec<(Vec3, Vec3, Vec3, f32, f32)> = Vec::new();
+    // Крупные листья располагаются попеременно вдоль стебля.
+    let leaf_count = 9usize;
+
+    for i in 0..leaf_count {
+        let t = 0.18 + i as f32 * 0.075;
+        let center = base + (top - base) * t;
+
+        let angle =
+            lean_angle + i as f32 * 2.35 + rng.random_range(-0.25..0.25);
+
+        let side = Vec3::new(angle.cos(), angle.sin(), 0.0);
+
+        let leaf_length = height * rng.random_range(0.15..0.22);
+        let leaf_half_width = leaf_length * rng.random_range(0.20..0.27);
+
+        // Лист немного поднимается от стебля, а кончик слегка опускается.
+        let mid = center
+            + side * (leaf_length * 0.48)
+            + Vec3::Z * (leaf_length * 0.08);
+
+        let tip = center
+            + side * leaf_length
+            - Vec3::Z * (leaf_length * rng.random_range(0.02..0.10));
+
+        let across = Vec3::new(-side.y, side.x, 0.0);
+
+        let p0 = center;
+        let p1 = mid + across * leaf_half_width;
+        let p2 = tip;
+        let p3 = mid - across * leaf_half_width;
+
+        sunflower_leaves.push((
+            center,
+            side,
+            across,
+            leaf_length,
+            leaf_half_width,
+        ));
+
+        green_faces.push(
+            Polygon::quad(p0, p1, p2, p3)
+                .oriented(Vec3::Z),
+        );
+    }
+
+    // Цветочная корзинка.
+    // Она почти вертикальная, но немного наклонена в сторону наклона стебля.
+    let flower_radius = height * rng.random_range(0.10..0.13);
+    let petals = 18usize;
+
+    let flower_center = top;
+
+    let sun_direction = Vec3::new(1.0, 0.35, 0.25).normalize();
+
+    let flower_forward = sun_direction;
+
+    let world_up = Vec3::Z;
+
+    let flower_right = world_up.cross(flower_forward).normalize();
+
+    let flower_up = flower_forward.cross(flower_right).normalize();
+
+    // Тёмная центральная часть корзинки.
+    let disk_radius = flower_radius * 0.55;
+
+    for i in 0..petals {
+        let a0 = std::f32::consts::TAU * i as f32 / petals as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / petals as f32;
+
+        let p0 = flower_center;
+
+        let p1 = flower_center
+            + flower_right * (a0.cos() * disk_radius)
+            + flower_up * (a0.sin() * disk_radius);
+
+        let p2 = flower_center
+            + flower_right * (a1.cos() * disk_radius)
+            + flower_up * (a1.sin() * disk_radius);
+
+        brown_faces.push(
+            Polygon::triangle(p0, p1, p2)
+                .oriented(flower_forward),
+        );
+    }
+
+    // Крупные лепестки вокруг центрального диска.
+    for i in 0..petals {
+        let angle =
+            std::f32::consts::TAU * i as f32 / petals as f32;
+
+        let radial =
+            flower_right * angle.cos()
+            + flower_up * angle.sin();
+
+        let tangent =
+            flower_right * -angle.sin()
+            + flower_up * angle.cos();
+
+        let petal_base =
+            flower_center + radial * (disk_radius * 0.82);
+
+        let petal_tip =
+            flower_center + radial * flower_radius;
+
+        let petal_half_width = flower_radius * 0.12;
+
+        let p0 = petal_base - tangent * petal_half_width;
+        let p1 = petal_base + tangent * petal_half_width;
+        let p2 = petal_tip;
+
+        yellow_faces.push(
+            Polygon::triangle(p0, p1, p2)
+                .oriented(flower_forward),
+        );
+    }
+
+    // Облако точек подсолнуха повторяет форму растения:
+    // стебель, крупные листья и цветочную корзинку.
+    let pts = g.tuft_cloud_points.clamp(16, 128);
+    let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
+
+    // Примерно треть точек — вдоль стебля.
+    let stem_points = pts / 4;
+
+    for _ in 0..stem_points {
+        let t: f32 = rng.random_range(0.0..1.0);
+        let center = base + (top - base) * t;
+
+        let angle = rng.random_range(0.0..std::f32::consts::TAU);
+        let dist = rng.random_range(0.0..stem_half_width);
+
+        cloud.push(
+            center
+                + Vec3::new(
+                    angle.cos() * dist,
+                    angle.sin() * dist,
+                    0.0,
+                ),
+        );
+    }
+
+    // Примерно треть точек — по крупным листьям.
+    let leaf_points = pts / 3;
+
+    for _ in 0..leaf_points {
+        let leaf_index = rng.random_range(0..sunflower_leaves.len());
+
+    let (center, side, across, leaf_length, leaf_max_half_width) =
+        sunflower_leaves[leaf_index];
+            let along = rng.random_range(0.05..1.0);
+            let width_factor = (std::f32::consts::PI * along).sin();
+
+            let leaf_half_width = leaf_max_half_width * width_factor;
+            let sideways = rng.random_range(-leaf_half_width..leaf_half_width);
+
+            cloud.push(
+                center
+                    + side * (leaf_length * along)
+                    + across * sideways
+                    - Vec3::Z * (leaf_length * 0.05 * along),
+            );
+        }
+
+    // Оставшиеся точки — по всей площади цветочной корзинки.
+    while cloud.len() < pts {
+        let angle = rng.random_range(0.0..std::f32::consts::TAU);
+        let radius =
+            rng.random_range(0.0f32..1.0).sqrt() * flower_radius;
+
+        cloud.push(
+            flower_center
+                + flower_right * (angle.cos() * radius)
+                + flower_up * (angle.sin() * radius),
+        );
+    }
+
+    let part = Part::new(
+        "подсолнух",
+        g.color,
+        green_faces,
+        true,
+        cloud,
+    )
+    .child(Part::new(
+        "сердцевина",
+        Color::srgb(0.22, 0.12, 0.05),
+        brown_faces,
+        true,
+        Vec::new(),
+    ))
+    .child(Part::new(
+        "лепестки",
+        Color::srgb(0.95, 0.68, 0.08),
+        yellow_faces,
+        true,
+        Vec::new(),
+    ));
+
+    let point_cloud = part.collect_cloud();
+
+    GrassTuft {
+        part,
+        point_cloud,
+        height: height + flower_radius,
+        radius: flower_radius.max(g.tuft_radius),
+        blade_count: 1,
     }
 }
 
