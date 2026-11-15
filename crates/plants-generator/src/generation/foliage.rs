@@ -687,9 +687,48 @@ fn build_agave_leaves(
                 tip,
             ));
 
-            foliage.cloud.push(base);
-            foliage.cloud.push(middle);
-            foliage.cloud.push(tip);
+            // Облако точек повторяет поверхность каждого мясистого листа агавы.
+            // Точки идут от широкого основания через середину к острому кончику.
+            let cloud_points_per_leaf = 15usize;
+
+            for point_index in 0..cloud_points_per_leaf {
+                let t =
+                    (point_index as f32 + 0.5) / cloud_points_per_leaf as f32;
+
+                // Центральная линия точно следует геометрии листа:
+                // основание -> середина -> кончик.
+                let center_line = if t <= 0.58 {
+                    let local_t = t / 0.58;
+                    base.lerp(middle, local_t)
+                } else {
+                    let local_t = (t - 0.58) / 0.42;
+                    middle.lerp(tip, local_t)
+                };
+
+                // Агава широкая у основания и в средней части,
+                // после чего лист быстро сужается к острию.
+                let width_factor = if t <= 0.58 {
+                    0.85 + (t / 0.58) * 0.15
+                } else {
+                    1.0 - ((t - 0.58) / 0.42)
+                };
+
+                let local_half_width = half_width * width_factor;
+
+                let sideways =
+                    rng.random_range(-local_half_width..=local_half_width);
+
+                // Небольшой подъём к центральному гребню сохраняет
+                // характерную мясистую форму листа.
+                let ridge_height =
+                    0.045 + 0.040 * (1.0 - (2.0 * t - 1.0).abs());
+
+                foliage.cloud.push(
+                    center_line
+                        + tangent * sideways
+                        + Vec3::Z * ridge_height,
+                );
+            }
 
             foliage.count += 1;
         }
@@ -949,9 +988,42 @@ fn build_yucca_leaves(
                 tip,
             ));
 
-            foliage.cloud.push(base);
-            foliage.cloud.push(middle);
-            foliage.cloud.push(tip);
+            // Облако точек повторяет реальную поверхность листа юкки.
+            // Точки распределяются от основания через середину к кончику.
+            let cloud_points_per_leaf = 9usize;
+
+            for point_index in 0..cloud_points_per_leaf {
+                let t = (point_index as f32 + 0.5) / cloud_points_per_leaf as f32;
+
+                // Центральная линия следует тому же изгибу,
+                // что и визуальная геометрия листа.
+                let center_line = if t <= 0.55 {
+                    let local_t = t / 0.55;
+                    base.lerp(middle, local_t)
+                } else {
+                    let local_t = (t - 0.55) / 0.45;
+                    middle.lerp(tip, local_t)
+                };
+
+                // Ширина возрастает к середине листа
+                // и постепенно сужается к острому кончику.
+                let width_factor = if t <= 0.55 {
+                    0.55 + (t / 0.55) * 0.45
+                } else {
+                    1.0 - ((t - 0.55) / 0.45)
+                };
+
+                let local_half_width = half_width * width_factor;
+
+                // Несколько точек поперёк листовой пластины,
+                // чтобы облако показывало не линию, а сам лист.
+                let sideways =
+                    rng.random_range(-local_half_width..=local_half_width);
+
+                foliage.cloud.push(
+                    center_line + tangent * sideways,
+                );
+            }
 
             foliage.count += 1;
         }

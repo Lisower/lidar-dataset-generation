@@ -138,19 +138,39 @@ impl Plant {
             for poly in polygons {
                 faces.push(translate_polygon(&poly, midpoint));
             }
-            cloud.extend(branch_cone_cloud(r0, r1, height, axis, p0, config.point_step));
+                        if config.preset == PlantPreset::CactusSmall {
+                cloud.extend(cactus_small_cloud(
+                    r0,
+                    r1,
+                    height,
+                    axis,
+                    p0,
+                    config.point_step,
+                ));
+            } else {
+                cloud.extend(branch_cone_cloud(
+                    r0,
+                    r1,
+                    height,
+                    axis,
+                    p0,
+                    config.point_step,
+                ));
+            }
         }
         // Шум на облако веток — сетка не должна «светиться» правильной решёткой.
         // Применяется к каждой группе отдельно (шум позиционный и детерминированный,
         // поэтому для одной группы результат совпадает с прежним общим проходом).
-        for (_, _, cloud) in &mut by_color {
-            apply_noise(
-                cloud,
-                GridNoise {
-                    amplitude: config.jitter,
-                },
-                seed.with_label("ветки"),
-            );
+        if config.preset != PlantPreset::CactusSmall {
+            for (_, _, cloud) in &mut by_color {
+                apply_noise(
+                    cloud,
+                    GridNoise {
+                        amplitude: config.jitter,
+                    },
+                    seed.with_label("ветки"),
+                );
+            }
         }
 
         // Одна группа — сама часть «ветки» (как раньше); несколько — часть-группа
@@ -307,6 +327,71 @@ fn branch_cone_cloud(
             out.push(center + u * (r * a.cos()) + v * (r * a.sin()));
         }
     }
+    out
+}
+
+/// Облако точек маленького кактуса:
+/// точки распределяются по поверхности каждого отдельного побега,
+/// сохраняя его вертикальную форму и продольные рёбра.
+fn cactus_small_cloud(
+    r0: f32,
+    r1: f32,
+    height: f32,
+    axis: Vec3,
+    p0: Vec3,
+    step: f32,
+) -> Vec<Vec3> {
+    if step <= 1e-4 || height <= 1e-4 {
+        return Vec::new();
+    }
+
+    let (u, v) = basis(axis);
+
+    let vertical_step = step.max(0.09);
+    let rings = (height / vertical_step).ceil().max(6.0) as usize;
+
+    // Нескольких продольных линий достаточно, чтобы показать
+    // цилиндрическую форму побега, не сливая соседние побеги
+    // в одно сплошное облако.
+    let rib_count = 6usize;
+
+    let mut out = Vec::with_capacity((rings + 1) * rib_count);
+
+    for k in 0..=rings {
+        let t = k as f32 / rings as f32;
+
+        let center = p0 + axis * (height * t);
+
+        let base_radius = r0 * (1.0 - t) + r1 * t;
+
+        // Верхняя часть плавно сужается, повторяя округлую макушку.
+        let cap_start = 0.82_f32;
+        let cap_factor = if t > cap_start {
+            let cap_t = (t - cap_start) / (1.0 - cap_start);
+            (cap_t * std::f32::consts::FRAC_PI_2)
+                .cos()
+                .max(0.08)
+        } else {
+            1.0
+        };
+
+        let radius = base_radius * cap_factor;
+
+        for rib in 0..rib_count {
+            let angle =
+                std::f32::consts::TAU * rib as f32 / rib_count as f32;
+
+            // Небольшое чередование радиуса подчёркивает рёбра,
+            // но не превращает облако в сплошной овальный объём.
+            let relief = if rib % 2 == 0 { 1.045 } else { 0.955 };
+
+            let radial =
+                u * angle.cos() + v * angle.sin();
+
+            out.push(center + radial * radius * relief);
+        }
+    }
+
     out
 }
 

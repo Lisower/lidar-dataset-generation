@@ -125,6 +125,14 @@ fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
 
     let mut faces: Vec<Polygon> = Vec::with_capacity(blade_count * 10);
 
+    // Сохраняем положение каждого стебля, чтобы облако точек
+    // повторяло реальную геометрию пшеницы.
+    let mut wheat_stalks: Vec<(Vec3, Vec3, f32)> =
+        Vec::with_capacity(blade_count);
+
+    let mut wheat_leaves: Vec<(Vec3, Vec3)> =
+        Vec::with_capacity(blade_count * 2); 
+
     for i in 0..blade_count {
         let angle = std::f32::consts::TAU * i as f32 / blade_count as f32
             + rng.random_range(-0.35..0.35);
@@ -147,6 +155,8 @@ fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
             + Vec3::new(lean_angle.cos(), lean_angle.sin(), 0.0)
                 * (lean * h * 0.25)
             + Vec3::Z * h;
+
+        wheat_stalks.push((base, top, h));    
 
         // Тонкий вертикальный стебель.
         let stem_half_width = g.blade_width * 0.5;
@@ -176,6 +186,8 @@ fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
             let leaf_tip = leaf_base
                 + perp * (leaf_side * leaf_length * 0.45)
                 + Vec3::Z * (leaf_length * 0.55);
+
+            wheat_leaves.push((leaf_base, leaf_tip));    
 
             let l0 = leaf_base - perp * leaf_width;
             let l1 = leaf_base + perp * leaf_width;
@@ -238,21 +250,71 @@ fn generate_wheat_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
         }
     }
 
-    let pts = g.tuft_cloud_points.clamp(4, 64);
-    let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
+    // Облако точек повторяет реальные стебли и колосья пшеницы.
+let points_per_stalk = 12usize;
+let points_per_ear = 8usize;
 
-    for _ in 0..pts {
-        let angle = rng.random_range(0.0..std::f32::consts::TAU);
-        let dist =
-            rng.random_range(0.0f32..1.0).sqrt() * g.tuft_radius.max(0.01);
+let pts = wheat_stalks.len() * (points_per_stalk + points_per_ear);
+let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
 
-        let height = tuft_height * rng.random_range(0.2..1.15);
+for &(base, top, h) in &wheat_stalks {
+    // Точки непосредственно вдоль стебля.
+    for point_index in 0..points_per_stalk {
+        let t = point_index as f32 / (points_per_stalk - 1) as f32;
 
-        cloud.push(Vec3::new(
-            angle.cos() * dist,
-            angle.sin() * dist,
-            height,
-        ));
+        let center = base + (top - base) * t;
+
+        let jitter = Vec3::new(
+            rng.random_range(-g.blade_width..g.blade_width),
+            rng.random_range(-g.blade_width..g.blade_width),
+            rng.random_range(-0.003..0.003),
+        );
+
+        cloud.push(center + jitter);
+    }
+
+        // Точки колоса над верхушкой стебля.
+        let ear_height = h * 0.16;
+
+        for point_index in 0..points_per_ear {
+            let t = point_index as f32 / (points_per_ear - 1) as f32;
+
+            let center = top + Vec3::Z * (ear_height * t);
+
+            let width =
+                g.blade_width * 2.2 * (std::f32::consts::PI * t).sin().max(0.25);
+
+            let angle = rng.random_range(0.0..std::f32::consts::TAU);
+            let radius = rng.random_range(0.0..width);
+
+            cloud.push(
+                center
+                    + Vec3::new(
+                        angle.cos() * radius,
+                        angle.sin() * radius,
+                        0.0,
+                    ),
+            );
+        }
+    }
+
+    // Точки вдоль настоящих листьев пшеницы.
+    for &(leaf_base, leaf_tip) in &wheat_leaves {
+        let points_per_leaf = 5usize;
+
+        for point_index in 0..points_per_leaf {
+            let t = point_index as f32 / (points_per_leaf - 1) as f32;
+
+            let center = leaf_base + (leaf_tip - leaf_base) * t;
+
+            let jitter = Vec3::new(
+                rng.random_range(-g.blade_width * 0.4..g.blade_width * 0.4),
+                rng.random_range(-g.blade_width * 0.4..g.blade_width * 0.4),
+                rng.random_range(-0.002..0.002),
+            );
+
+            cloud.push(center + jitter);
+        }
     }
 
     let part = Part::new(
