@@ -95,6 +95,7 @@ pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
             | PlantPreset::Juniper
             | PlantPreset::Wheat
             | PlantPreset::Sunflower
+            | PlantPreset::Corn
     ) {
         let mut cfg = from_ron(preset);
         cfg.seed = seed;
@@ -116,7 +117,8 @@ pub fn resolve(preset: PlantPreset, seed: Seed) -> PlantConfig {
         | PlantPreset::Oak
         | PlantPreset::Juniper
         | PlantPreset::Wheat
-        | PlantPreset::Sunflower => unreachable!("пресет RON-каталога"),
+        | PlantPreset::Sunflower
+        | PlantPreset::Corn => unreachable!("пресет RON-каталога"),
         PlantPreset::Bush => bush(),
         PlantPreset::TallGrass => tall_grass(),
         PlantPreset::SparseGrass => sparse_grass(),

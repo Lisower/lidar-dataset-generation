@@ -52,6 +52,9 @@ pub fn generate_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
     if config.preset == PlantPreset::Sunflower {
         return generate_sunflower_tuft(config, seed);
     }
+    if config.preset == PlantPreset::Corn {
+        return generate_corn_tuft(config, seed);
+    }
     let mut rng = seed.with_label("tuft").rng();
     let g = &config.grass;
 
@@ -585,6 +588,346 @@ fn generate_sunflower_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
         point_cloud,
         height: height + flower_radius,
         radius: flower_radius.max(g.tuft_radius),
+        blade_count: 1,
+    }
+}
+
+/// Сгенерировать кукурузу: высокий прочный стебель,
+/// широкие листья, початки и верхушечная метёлка.
+fn generate_corn_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
+    let mut rng = seed.with_label("corn_tuft").rng();
+    let g = &config.grass;
+
+    let height = rng.random_range(g.tuft_height_min..=g.tuft_height_max);
+
+    let mut green_faces: Vec<Polygon> = Vec::new();
+    let mut cob_faces: Vec<Polygon> = Vec::new();
+    let mut tassel_faces: Vec<Polygon> = Vec::new();
+
+    let base = Vec3::ZERO;
+
+    // Небольшой естественный наклон растения.
+    let lean_angle = rng.random_range(0.0..std::f32::consts::TAU);
+    let lean = g.blade_bend * height * 0.05;
+
+    let top = Vec3::new(
+        lean_angle.cos() * lean,
+        lean_angle.sin() * lean,
+        height,
+    );
+
+    // Стебель делаем крестом из двух плоскостей,
+    // чтобы он выглядел объёмнее с разных направлений.
+    let stem_half_width = g.blade_width * 0.22;
+
+    for dir in [
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+    ] {
+        let b0 = base - dir * stem_half_width;
+        let b1 = base + dir * stem_half_width;
+        let t0 = top + dir * stem_half_width * 0.72;
+        let t1 = top - dir * stem_half_width * 0.72;
+
+        green_faces.push(
+            Polygon::quad(b0, b1, t0, t1)
+                .oriented(Vec3::Z),
+        );
+    }
+
+    // Сохраняем геометрию листьев для облака точек.
+    let mut corn_leaves: Vec<(Vec3, Vec3, Vec3, f32, f32)> = Vec::new();
+
+    // Широкие длинные листья кукурузы располагаются
+    // попеременно вдоль большей части стебля.
+    let leaf_count = 14usize;
+
+    for i in 0..leaf_count {
+        let t = 0.12 + i as f32 * 0.072;
+        let center = base + (top - base) * t;
+
+        let angle =
+            lean_angle + i as f32 * 2.45 + rng.random_range(-0.18..0.18);
+
+        let side = Vec3::new(angle.cos(), angle.sin(), 0.0);
+        let across = Vec3::new(-side.y, side.x, 0.0);
+
+        let leaf_length = height * rng.random_range(0.28..0.38);
+        let leaf_half_width = leaf_length * rng.random_range(0.055..0.075);
+
+        // Лист состоит из двух соединённых сегментов:
+        // широкий у основания и постепенно сужающийся к кончику.
+        let mid = center
+            + side * (leaf_length * 0.55)
+            + Vec3::Z * (leaf_length * 0.06);
+
+        let tip = center
+            + side * leaf_length
+            - Vec3::Z * (leaf_length * rng.random_range(0.03..0.08));
+
+        let base_half_width = leaf_half_width * 0.38;
+        let mid_half_width = leaf_half_width;
+        let tip_half_width = leaf_half_width * 0.08;
+
+        // Первая половина листа.
+        green_faces.push(
+            Polygon::quad(
+                center - across * base_half_width,
+                center + across * base_half_width,
+                mid + across * mid_half_width,
+                mid - across * mid_half_width,
+            )
+            .oriented(Vec3::Z),
+        );
+
+        // Вторая половина постепенно сужается к кончику.
+        green_faces.push(
+            Polygon::quad(
+                mid - across * mid_half_width,
+                mid + across * mid_half_width,
+                tip + across * tip_half_width,
+                tip - across * tip_half_width,
+            )
+            .oriented(Vec3::Z),
+        );
+
+        corn_leaves.push((
+            center,
+            side,
+            across,
+            leaf_length,
+            leaf_half_width,
+        ));
+    }
+
+    // Початки. Располагаем их в средней и верхней части растения.
+    let mut corn_cobs: Vec<(Vec3, Vec3, f32, f32)> = Vec::new();
+
+    let cob_count = 2usize;
+
+    for i in 0..cob_count {
+        let t = if i == 0 { 0.48 } else { 0.64 };
+        let center = base + (top - base) * t;
+
+        let angle =
+            lean_angle + 1.15 + i as f32 * 2.75;
+
+        let outward = Vec3::new(angle.cos(), angle.sin(), 0.0);
+        let across = Vec3::new(-outward.y, outward.x, 0.0);
+
+        let cob_length = height * rng.random_range(0.12..0.16);
+        let cob_half_width = cob_length * rng.random_range(0.12..0.16);
+
+        let cob_base =
+            center + outward * (stem_half_width * 1.2);
+
+        let cob_tip =
+            cob_base
+                + outward * (cob_length * 0.28)
+                + Vec3::Z * (cob_length * 0.92);
+
+        // Початок изображаем вытянутым ромбом.
+        let cob_mid = (cob_base + cob_tip) * 0.5;
+
+        cob_faces.push(
+            Polygon::quad(
+                cob_base,
+                cob_mid + across * cob_half_width,
+                cob_tip,
+                cob_mid - across * cob_half_width,
+            )
+            .oriented(Vec3::Z),
+        );
+
+        // Зелёные листья-обёртки вокруг основания початка.
+        let husk_length = cob_length * 1.15;
+
+        let husk_tip =
+            cob_base
+                + outward * (husk_length * 0.42)
+                + Vec3::Z * (husk_length * 0.90);
+
+        green_faces.push(
+            Polygon::triangle(
+                cob_base - across * cob_half_width * 1.25,
+                cob_base + across * cob_half_width * 1.25,
+                husk_tip,
+            )
+            .oriented(Vec3::Z),
+        );
+
+        corn_cobs.push((
+            cob_base,
+            cob_tip,
+            cob_length,
+            cob_half_width,
+        ));
+    }
+
+    // Верхушечная метёлка.
+    let tassel_center = top;
+    let tassel_height = height * 0.13;
+    let tassel_branches = 9usize;
+
+    for i in 0..tassel_branches {
+        let angle =
+            std::f32::consts::TAU * i as f32 / tassel_branches as f32;
+
+        let radial = Vec3::new(angle.cos(), angle.sin(), 0.0);
+
+        let branch_length =
+            height * rng.random_range(0.055..0.095);
+
+        let branch_tip =
+            tassel_center
+                + radial * branch_length
+                + Vec3::Z * tassel_height
+                    * rng.random_range(0.55..1.0);
+
+        let tangent = Vec3::new(-radial.y, radial.x, 0.0);
+        let half_width = g.blade_width * 0.08;
+
+        tassel_faces.push(
+            Polygon::quad(
+                tassel_center - tangent * half_width,
+                tassel_center + tangent * half_width,
+                branch_tip + tangent * half_width * 0.25,
+                branch_tip - tangent * half_width * 0.25,
+            )
+            .oriented(Vec3::Z),
+        );
+    }
+
+    // Центральная веточка метёлки.
+    let tassel_tip =
+        tassel_center + Vec3::Z * tassel_height;
+
+    tassel_faces.push(
+        Polygon::quad(
+            tassel_center - Vec3::X * g.blade_width * 0.08,
+            tassel_center + Vec3::X * g.blade_width * 0.08,
+            tassel_tip + Vec3::X * g.blade_width * 0.025,
+            tassel_tip - Vec3::X * g.blade_width * 0.025,
+        )
+        .oriented(Vec3::Z),
+    );
+
+    // Облако точек кукурузы повторяет стебель, листья,
+    // початки и верхушечную метёлку.
+    let pts = g.tuft_cloud_points.clamp(64, 256);
+    let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
+
+    // Стебель.
+    let stem_points = pts / 3;
+
+    for _ in 0..stem_points {
+        let t = rng.random_range(0.0..1.0);
+        let center = base + (top - base) * t;
+
+        let angle = rng.random_range(0.0..std::f32::consts::TAU);
+        let radius = rng.random_range(0.0..stem_half_width);
+
+        cloud.push(
+            center
+                + Vec3::new(
+                    angle.cos() * radius,
+                    angle.sin() * radius,
+                    0.0,
+                ),
+        );
+    }
+
+    // Широкие листья.
+    let leaf_points = pts * 2 / 5;
+
+    for _ in 0..leaf_points {
+        let leaf_index = rng.random_range(0..corn_leaves.len());
+
+        let (center, side, across, leaf_length, max_half_width) =
+            corn_leaves[leaf_index];
+
+        let along = rng.random_range(0.02..1.0);
+        let width_factor = (std::f32::consts::PI * along).sin();
+        let half_width = max_half_width * width_factor;
+
+        let sideways = rng.random_range(-half_width..half_width);
+
+        let vertical_curve =
+            leaf_length * (0.10 * along - 0.18 * along * along);
+
+        cloud.push(
+            center
+                + side * (leaf_length * along)
+                + across * sideways
+                + Vec3::Z * vertical_curve,
+        );
+    }
+
+    // Початки.
+    for &(cob_base, cob_tip, _cob_length, cob_half_width) in &corn_cobs {
+        for _ in 0..12 {
+            let t = rng.random_range(0.0..1.0);
+            let center = cob_base + (cob_tip - cob_base) * t;
+
+            let angle = rng.random_range(0.0..std::f32::consts::TAU);
+            let radius =
+                rng.random_range(0.0..cob_half_width)
+                    * (std::f32::consts::PI * t).sin().max(0.25);
+
+            cloud.push(
+                center
+                    + Vec3::new(
+                        angle.cos() * radius,
+                        angle.sin() * radius,
+                        0.0,
+                    ),
+            );
+        }
+    }
+
+    // Остаток точек — метёлка.
+    while cloud.len() < pts {
+        let angle = rng.random_range(0.0..std::f32::consts::TAU);
+        let radial = Vec3::new(angle.cos(), angle.sin(), 0.0);
+
+        let t = rng.random_range(0.0..1.0);
+
+        cloud.push(
+            tassel_center
+                + radial * (height * 0.075 * t)
+                + Vec3::Z * (tassel_height * t),
+        );
+    }
+
+    let part = Part::new(
+        "кукуруза",
+        g.color,
+        green_faces,
+        true,
+        cloud,
+    )
+    .child(Part::new(
+        "початки",
+        Color::srgb(0.78, 0.62, 0.16),
+        cob_faces,
+        true,
+        Vec::new(),
+    ))
+    .child(Part::new(
+        "метёлка",
+        Color::srgb(0.72, 0.62, 0.30),
+        tassel_faces,
+        true,
+        Vec::new(),
+    ));
+
+    let point_cloud = part.collect_cloud();
+
+    GrassTuft {
+        part,
+        point_cloud,
+        height: height + tassel_height,
+        radius: g.tuft_radius.max(height * 0.30),
         blade_count: 1,
     }
 }

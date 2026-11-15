@@ -80,11 +80,13 @@ pub enum PlantPreset {
     Wheat,
     /// Подсолнечник: высокий стебель с крупными листьями и цветочной корзинкой.
     Sunflower,
+    /// Кукуруза: высокий стебель с широкими листьями и початками.
+    Corn,
 }
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::DeciduousTree,
         Self::Spruce,
         Self::Fir,
@@ -103,6 +105,7 @@ impl PlantPreset {
         Self::SparseGrass,
         Self::Wheat,
         Self::Sunflower,
+        Self::Corn,
     ];
 
     /// Название для панели информации.
@@ -126,6 +129,7 @@ impl PlantPreset {
             Self::SparseGrass => "низкая трава",
             Self::Wheat => "пшеница",
             Self::Sunflower => "подсолнух",
+            Self::Corn => "кукуруза",
         }
     }
 
@@ -143,7 +147,7 @@ impl PlantPreset {
             | Self::Yucca
             | Self::Oak => PlantType::Tree,
             Self::CactusSmall | Self::Agave | Self::Bush | Self::Juniper => PlantType::Bush,
-            Self::TallGrass | Self::SparseGrass | Self::Wheat | Self::Sunflower => PlantType::Grass,
+            Self::TallGrass | Self::SparseGrass | Self::Wheat | Self::Sunflower | Self::Corn => PlantType::Grass,
         }
     }
 
@@ -170,6 +174,7 @@ impl PlantPreset {
             Self::SparseGrass => "sparse-grass",
             Self::Wheat => "wheat",
             Self::Sunflower => "sunflower",
+            Self::Corn => "corn",
         }
     }
 
@@ -202,6 +207,7 @@ impl PlantPreset {
             "sparsegrass" | "низкая трава" => Some(Self::SparseGrass),
             "wheat" | "пшеница" => Some(Self::Wheat),
             "sunflower" | "подсолнух" => Some(Self::Sunflower),
+            "corn" | "кукуруза" => Some(Self::Corn),
             _ => None,
         }
     }
