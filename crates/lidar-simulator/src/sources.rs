@@ -101,9 +101,15 @@ pub fn from_preset(
             config.seed = seed;
             config.point_step = source_step;
             config.jitter = 0.0;
-            let plant = plants_generator::Plant::generate(&config);
-            plant_triangles(&plant.root, y_up(), &mut triangles);
-            cloud = plant.point_cloud;
+            if config.preset.plant_type() == plants_generator::PlantType::Grass {
+                let tuft = plants_generator::generation::grass::generate_tuft(&config, seed);
+                plant_triangles(&tuft.part, y_up(), &mut triangles);
+                cloud = tuft.point_cloud;
+            } else {
+                let plant = plants_generator::Plant::generate(&config);
+                plant_triangles(&plant.root, y_up(), &mut triangles);
+                cloud = plant.point_cloud;
+            }
         }
         "landscapes" => {
             let mut config: landscapes_generator::LandscapeConfig =

@@ -496,6 +496,7 @@ fn all_generator_categories_scan_and_export_shared_xyz() {
     for id in [
         "buildings/cabin",
         "plants/cactus-small",
+        "plants/sparse-grass",
         "landscapes/plain",
         "terrains/open-field",
     ] {
