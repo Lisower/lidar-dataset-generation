@@ -6,6 +6,8 @@
 //!
 //! - `Ctrl+S` — открыть/закрыть окно, `Esc` — закрыть;
 //! - строки-чекбоксы пресетов и групп, кнопка «выбрать все / снять все»;
+//! - прокручиваемый список с вертикальной полосой прокрутки справа (колесо
+//!   мыши и перетаскивание ползунка);
 //! - двойной клик по строке группы — свернуть/развернуть её содержимое
 //!   (стрелка `▾`/`▸` у имени);
 //! - частично выбранная группа помечается `[-]` янтарным цветом;
@@ -25,7 +27,9 @@ use bevy::prelude::*;
 use bevy::picking::hover::Hovered;
 use bevy::scene::EntityScene;
 use bevy::text::FontSourceTemplate;
-use bevy::ui_widgets::{Activate, Button};
+use bevy::ui_widgets::{
+    Activate, Button, ControlOrientation, ScrollArea, Scrollbar, ScrollbarThumb,
+};
 use generation_core::general::RegenerationRequest;
 use generation_core::presets::{PresetGroup, PresetMeta, PresetStore};
 use generation_core::UiModalOpen;
@@ -184,16 +188,55 @@ fn window_content(
         push_group_rows(&mut rows, store, group, 0, collapsed);
     }
 
+    // Список и вертикальный скроллбар — соседи в grid-контейнере: список
+    // занимает всё доступное место, полоса прокрутки прижата к правому краю.
     let body: Box<dyn SceneList> = Box::new(EntityScene(bsn! {
         Node {
             width: percent(100),
             flex_grow: 1.0,
             min_height: px(0),
-            flex_direction: FlexDirection::Column,
-            overflow: {Overflow::scroll_y()},
-            row_gap: px(4),
+            display: Display::Grid,
+            grid_template_columns: vec![
+                RepeatedGridTrack::flex(1, 1.0),
+                RepeatedGridTrack::auto(1),
+            ],
+            grid_template_rows: vec![RepeatedGridTrack::flex(1, 1.0)],
+            column_gap: px(8),
         }
-        Children [ {rows} ]
+        Children [
+            #UiPresetList
+            ScrollArea
+            Node {
+                width: percent(100),
+                min_width: px(0),
+                min_height: px(0),
+                flex_direction: FlexDirection::Column,
+                overflow: {Overflow::scroll_y()},
+                row_gap: px(4),
+            }
+            Children [ {rows} ]
+            --
+            Node {
+                width: px(10),
+                min_width: px(10),
+                grid_row: GridPlacement::start(1),
+                grid_column: GridPlacement::start(2),
+                border_radius: BorderRadius::all(px(5)),
+            }
+            BackgroundColor({PANEL_BORDER})
+            Scrollbar {
+                target: #UiPresetList,
+                orientation: ControlOrientation::Vertical,
+                min_thumb_length: 24.0,
+            }
+            Children [
+                ScrollbarThumb {
+                    border_radius: BorderRadius::all(px(5)),
+                    border: UiRect::all(px(0)),
+                }
+                BackgroundColor({ACCENT_COLOR})
+            ]
+        ]
     }));
     let footer = footer_scene();
     vec![body, footer]

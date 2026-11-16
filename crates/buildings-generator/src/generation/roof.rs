@@ -17,11 +17,11 @@ use bevy::transform::components::Transform;
 use generation_core::geometry::Polygon;
 use rand::RngExt;
 
+use super::BuildingColors;
 use super::config::BuildingConfig;
 use super::config::RoofStyle;
-use super::part::Part;
 use super::elements::Facade;
-use super::BuildingColors;
+use super::part::Part;
 
 /// Толщина кровли (высота «карнизной доски»), берётся из конфигурации.
 ///
@@ -43,6 +43,7 @@ pub fn roof_faces(
         RoofStyle::Gable => gable_polys(length, width, overhang, pitch, t, ridge),
         RoofStyle::Hip => hip_polys(length, width, overhang, pitch, t),
         RoofStyle::HalfHip => half_hip_polys(length, width, overhang, pitch, t, ridge),
+        RoofStyle::HalfHipGable => half_hip_gable_polys(length, width, overhang, pitch, t, ridge),
         RoofStyle::Barrel => barrel_polys(length, width, overhang, pitch, t),
     }
 }
@@ -63,10 +64,34 @@ fn flat_polys(length: f32, width: f32, overhang: f32, t: f32) -> Vec<Polygon> {
         )
         .oriented(Vec3::Z),
         // Торцы плиты (видимые свесы).
-        Polygon::quad(pts(lx, -wy, z0), pts(-lx, -wy, z0), pts(-lx, -wy, z1), pts(lx, -wy, z1)).oriented(-Vec3::Y),
-        Polygon::quad(pts(-lx, wy, z0), pts(lx, wy, z0), pts(lx, wy, z1), pts(-lx, wy, z1)).oriented(Vec3::Y),
-        Polygon::quad(pts(-lx, -wy, z0), pts(-lx, wy, z0), pts(-lx, wy, z1), pts(-lx, -wy, z1)).oriented(-Vec3::X),
-        Polygon::quad(pts(lx, -wy, z0), pts(lx, wy, z0), pts(lx, wy, z1), pts(lx, -wy, z1)).oriented(Vec3::X),
+        Polygon::quad(
+            pts(lx, -wy, z0),
+            pts(-lx, -wy, z0),
+            pts(-lx, -wy, z1),
+            pts(lx, -wy, z1),
+        )
+        .oriented(-Vec3::Y),
+        Polygon::quad(
+            pts(-lx, wy, z0),
+            pts(lx, wy, z0),
+            pts(lx, wy, z1),
+            pts(-lx, wy, z1),
+        )
+        .oriented(Vec3::Y),
+        Polygon::quad(
+            pts(-lx, -wy, z0),
+            pts(-lx, wy, z0),
+            pts(-lx, wy, z1),
+            pts(-lx, -wy, z1),
+        )
+        .oriented(-Vec3::X),
+        Polygon::quad(
+            pts(lx, -wy, z0),
+            pts(lx, wy, z0),
+            pts(lx, wy, z1),
+            pts(lx, -wy, z1),
+        )
+        .oriented(Vec3::X),
     ]
 }
 
@@ -239,6 +264,49 @@ fn half_hip_polys(
     .collect::<Vec<_>>()
 }
 
+/// Двускатная полувальмовая крыша: два основных ската доходят до
+/// торцов, а малые верхние вальмы срезают концы конька. Под ними
+/// остаются большие торцевые фронтоны.
+fn half_hip_gable_polys(
+    length: f32,
+    width: f32,
+    overhang: f32,
+    pitch_deg: f32,
+    t: f32,
+    ridge: f32,
+) -> Vec<Polygon> {
+    let (lx, wy) = (length * 0.5 + overhang, width * 0.5 + overhang);
+    let rise = pitch_deg.to_radians().tan() * wy;
+    let z_cut = rise * HALF_HIP_CUT;
+    let gx = half_hip_fronton_x(lx, wy);
+    let gy_lo = (ridge + wy) * (1.0 - HALF_HIP_CUT);
+    let gy_hi = (wy - ridge) * (1.0 - HALF_HIP_CUT);
+
+    let e0 = Vec3::new(-lx, -wy, 0.0);
+    let e1 = Vec3::new(lx, -wy, 0.0);
+    let e2 = Vec3::new(lx, wy, 0.0);
+    let e3 = Vec3::new(-lx, wy, 0.0);
+    let r_pos = Vec3::new(gx, ridge, rise);
+    let r_neg = Vec3::new(-gx, ridge, rise);
+    let pos_lo = Vec3::new(lx, ridge - gy_lo, z_cut);
+    let pos_hi = Vec3::new(lx, ridge + gy_hi, z_cut);
+    let neg_lo = Vec3::new(-lx, ridge - gy_lo, z_cut);
+    let neg_hi = Vec3::new(-lx, ridge + gy_hi, z_cut);
+
+    vec![
+        Polygon::from_points(vec![e0, e1, pos_lo, r_pos, r_neg, neg_lo]).oriented(Vec3::Z),
+        Polygon::from_points(vec![e3, neg_hi, r_neg, r_pos, pos_hi, e2]).oriented(Vec3::Z),
+        Polygon::triangle(pos_lo, pos_hi, r_pos).oriented(Vec3::X),
+        Polygon::triangle(neg_hi, neg_lo, r_neg).oriented(-Vec3::X),
+        Polygon::quad(e1, e2, pos_hi, pos_lo).oriented(Vec3::X),
+        Polygon::quad(e3, e0, neg_lo, neg_hi).oriented(-Vec3::X),
+    ]
+    .into_iter()
+    .chain(eave_boards(length, width, overhang, t))
+    .chain(eave_soffits(length, width, overhang, t))
+    .collect()
+}
+
 /// Вальмовая крыша: четыре ската, сходящихся к короткому коньку.
 ///
 /// Рогов-«досок» (наклонных карнизов вдоль рёбер) нет — только гладкие
@@ -324,10 +392,7 @@ fn barrel_polys(length: f32, width: f32, overhang: f32, pitch_deg: f32, t: f32) 
             // Убираем совпадающие подряд идущие вершины (на краях дуги).
             let mut pts: Vec<Vec3> = Vec::new();
             for c in corners {
-                if pts
-                    .last()
-                    .is_none_or(|q: &Vec3| q.distance(c) > 1e-4)
-                {
+                if pts.last().is_none_or(|q: &Vec3| q.distance(c) > 1e-4) {
                     pts.push(c);
                 }
             }
@@ -437,10 +502,10 @@ pub fn parapet_parts(
     };
 
     vec![
-        mk(0.0, wy, 2.0 * lx, t),   // север
-        mk(0.0, -wy, 2.0 * lx, t),  // юг
-        mk(lx, 0.0, t, 2.0 * wy),   // восток
-        mk(-lx, 0.0, t, 2.0 * wy),  // запад
+        mk(0.0, wy, 2.0 * lx, t),  // север
+        mk(0.0, -wy, 2.0 * lx, t), // юг
+        mk(lx, 0.0, t, 2.0 * wy),  // восток
+        mk(-lx, 0.0, t, 2.0 * wy), // запад
     ]
 }
 
@@ -492,18 +557,49 @@ pub fn dormer_part(
         Polygon::quad(peak_front, right_front, right_join, peak_join).oriented(Vec3::Z),
     ];
     let walls = vec![
-        Polygon::quad(left_base,right_base,right_front,left_front).oriented(-Vec3::Y),
-        Polygon::triangle(left_base,left_front,left_join).oriented(-Vec3::X),
-        Polygon::triangle(right_base,right_join,right_front).oriented(Vec3::X),
+        Polygon::quad(left_base, right_base, right_front, left_front).oriented(-Vec3::Y),
+        Polygon::triangle(left_base, left_front, left_join).oriented(-Vec3::X),
+        Polygon::triangle(right_base, right_join, right_front).oriented(Vec3::X),
     ];
-    let gables = vec![Polygon::triangle(left_front,right_front,peak_front).oriented(-Vec3::Y)];
-    let rotation = Quat::from_mat3(&Mat3::from_cols(Vec3::X,Vec3::Z,-Vec3::Y));
-    Part::group("integrated-dormer",colors.wall,Transform::IDENTITY)
-        .child(Part::from_faces("dormer-walls",walls,colors.wall,Transform::IDENTITY,false,config))
-        .child(Part::from_faces("dormer-gables",gables,colors.wall,Transform::IDENTITY,false,config))
-        .child(Part::from_faces("dormer-roof",roof_polys,colors.roof,Transform::IDENTITY,true,config))
-        .child(Part::boxed("dormer-window",Vec3::new(w*1.3,wall_h*0.55,0.04),Vec3::Z,colors.window,
-            Transform { translation:Vec3::new(0.0,front_y-0.025,base_z+wall_h*0.5),rotation,..default() },config))
+    let gables = vec![Polygon::triangle(left_front, right_front, peak_front).oriented(-Vec3::Y)];
+    let rotation = Quat::from_mat3(&Mat3::from_cols(Vec3::X, Vec3::Z, -Vec3::Y));
+    Part::group("integrated-dormer", colors.wall, Transform::IDENTITY)
+        .child(Part::from_faces(
+            "dormer-walls",
+            walls,
+            colors.wall,
+            Transform::IDENTITY,
+            false,
+            config,
+        ))
+        .child(Part::from_faces(
+            "dormer-gables",
+            gables,
+            colors.wall,
+            Transform::IDENTITY,
+            false,
+            config,
+        ))
+        .child(Part::from_faces(
+            "dormer-roof",
+            roof_polys,
+            colors.roof,
+            Transform::IDENTITY,
+            true,
+            config,
+        ))
+        .child(Part::boxed(
+            "dormer-window",
+            Vec3::new(w * 1.3, wall_h * 0.55, 0.04),
+            Vec3::Z,
+            colors.window,
+            Transform {
+                translation: Vec3::new(0.0, front_y - 0.025, base_z + wall_h * 0.5),
+                rotation,
+                ..default()
+            },
+            config,
+        ))
 }
 
 // Roof light aligned with an actual planar slope face.
@@ -521,19 +617,51 @@ fn roof_window_part(face: &Polygon, colors: &BuildingColors, config: &BuildingCo
     let along = Vec3::X;
     let up = normal.cross(along).normalize();
     let rotation = Quat::from_mat3(&Mat3::from_cols(along, up, normal));
-    let mut window = Part::group("roof-window", colors.window, Transform {
-        translation: center + normal * 0.025, rotation, ..default()
-    });
+    let mut window = Part::group(
+        "roof-window",
+        colors.window,
+        Transform {
+            translation: center + normal * 0.025,
+            rotation,
+            ..default()
+        },
+    );
     // A shallow frame follows the slope; the glass lies just above it.
-    for (size,pos) in [
-        (Vec3::new(width,0.06,0.04),Vec3::new(0.0,-height*0.5,0.0)),
-        (Vec3::new(width,0.06,0.04),Vec3::new(0.0,height*0.5,0.0)),
-        (Vec3::new(0.06,height,0.04),Vec3::new(-width*0.5,0.0,0.0)),
-        (Vec3::new(0.06,height,0.04),Vec3::new(width*0.5,0.0,0.0)),
+    for (size, pos) in [
+        (
+            Vec3::new(width, 0.06, 0.04),
+            Vec3::new(0.0, -height * 0.5, 0.0),
+        ),
+        (
+            Vec3::new(width, 0.06, 0.04),
+            Vec3::new(0.0, height * 0.5, 0.0),
+        ),
+        (
+            Vec3::new(0.06, height, 0.04),
+            Vec3::new(-width * 0.5, 0.0, 0.0),
+        ),
+        (
+            Vec3::new(0.06, height, 0.04),
+            Vec3::new(width * 0.5, 0.0, 0.0),
+        ),
     ] {
-        window = window.child(Part::boxed("skylight-frame", size, Vec3::Z, super::palette::FRAME, Transform::from_translation(pos), config));
+        window = window.child(Part::boxed(
+            "skylight-frame",
+            size,
+            Vec3::Z,
+            super::palette::FRAME,
+            Transform::from_translation(pos),
+            config,
+        ));
     }
-    window.child(Part::boxed("skylight-glass",Vec3::new(width-0.06,height-0.06,0.015),Vec3::Z,colors.window,Transform::from_xyz(0.0,0.0,0.025),config))
+    window.child(Part::boxed(
+        "skylight-glass",
+        Vec3::new(width - 0.06, height - 0.06, 0.015),
+        Vec3::Z,
+        colors.window,
+        Transform::from_xyz(0.0, 0.0, 0.025),
+        config,
+    ))
 }
 
 /// Дымоход — вертикальный короб на кровле.
@@ -548,17 +676,19 @@ fn chimney_part(
     ridge: f32,
     config: &BuildingConfig,
 ) -> Part {
-    let mut rng = config
-        .seed
-        .with_label("дымоход")
-        .rng();
+    let mut rng = config.seed.with_label("дымоход").rng();
     // Keep the entire footprint on the central side slope, away from end hips.
     let half = 0.21;
     let dx = rng.random_range(-0.1..0.1) * (lx - half).max(0.0);
     // Dormers occupy the -Y slope. Reserve the opposite slope for chimneys.
-    let back_ridge = if matches!(style, RoofStyle::Gable | RoofStyle::HalfHip) {
+    let back_ridge = if matches!(
+        style,
+        RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::HalfHipGable
+    ) {
         ridge
-    } else { 0.0 };
+    } else {
+        0.0
+    };
     let dy = back_ridge + rng.random_range(0.35..0.6) * (wy - back_ridge);
     let surface = |y| {
         if style == RoofStyle::Flat {
@@ -570,15 +700,27 @@ fn chimney_part(
     let top = surface(dy - half).max(surface(dy + half)) + 1.0;
     let bottom = |z: f32| surface(dy - z) - 0.02;
     let mut faces = mounted_walls(half, half, top, bottom);
-    faces.push(Polygon::quad(
-        Vec3::new(-half, top, -half), Vec3::new(-half, top, half),
-        Vec3::new(half, top, half), Vec3::new(half, top, -half),
-    ).oriented(Vec3::Y));
+    faces.push(
+        Polygon::quad(
+            Vec3::new(-half, top, -half),
+            Vec3::new(-half, top, half),
+            Vec3::new(half, top, half),
+            Vec3::new(half, top, -half),
+        )
+        .oriented(Vec3::Y),
+    );
     let rotation = Quat::from_mat3(&Mat3::from_cols(Vec3::X, Vec3::Z, -Vec3::Y));
     Part::from_faces(
-        "chimney", faces, super::palette::CHIMNEY,
-        Transform { translation: Vec3::new(dx, dy, 0.0), rotation, ..default() },
-        false, config,
+        "chimney",
+        faces,
+        super::palette::CHIMNEY,
+        Transform {
+            translation: Vec3::new(dx, dy, 0.0),
+            rotation,
+            ..default()
+        },
+        false,
+        config,
     )
 }
 
@@ -589,7 +731,7 @@ fn pitch_plane_z(style: RoofStyle, wy: f32, rise: f32, ridge: f32, y: f32) -> f3
     match style {
         RoofStyle::Flat => 0.0,
         RoofStyle::Shed => rise * (y + wy) / wy.max(0.01),
-        RoofStyle::Gable | RoofStyle::HalfHip => {
+        RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::HalfHipGable => {
             if y <= ridge {
                 rise * (y + wy) / (ridge + wy).max(0.01)
             } else {
@@ -615,7 +757,10 @@ fn pitch_plane_z(style: RoofStyle, wy: f32, rise: f32, ridge: f32, y: f32) -> f3
 /// Сдвиг гребня двускатной/полувальмовой крыши от центра (в долях
 /// полуширины `wy`), чтобы углы скатов различались.
 fn ridge_offset(config: &BuildingConfig, wy: f32, style: RoofStyle) -> f32 {
-    if !matches!(style, RoofStyle::Gable | RoofStyle::HalfHip) {
+    if !matches!(
+        style,
+        RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::HalfHipGable
+    ) {
         return 0.0;
     }
     config
@@ -657,7 +802,11 @@ pub fn roof_part(
     let random_spin = rng.random_range(0..4);
     let spin = entrance_roof_spin(style, entrance, random_spin);
     let swap = pitched && (spin == 1 || spin == 3);
-    let (roof_length, roof_width) = if swap { (width, length) } else { (length, width) };
+    let (roof_length, roof_width) = if swap {
+        (width, length)
+    } else {
+        (length, width)
+    };
     let rotation = if pitched && spin != 0 {
         Quat::from_rotation_z(spin as f32 * std::f32::consts::FRAC_PI_2)
     } else {
@@ -687,14 +836,30 @@ pub fn roof_part(
             );
             roof = roof.child(slab);
             if parapet {
-                let ps = parapet_parts(length, width, overhang, config.parapet_height, colors.roof, config);
+                let ps = parapet_parts(
+                    length,
+                    width,
+                    overhang,
+                    config.parapet_height,
+                    colors.roof,
+                    config,
+                );
                 roof = roof.children(ps);
             }
         }
         pitched => {
-            let mut faces = roof_faces(pitched, roof_length, roof_width, overhang, pitch_deg, config, ridge);
+            let mut faces = roof_faces(
+                pitched,
+                roof_length,
+                roof_width,
+                overhang,
+                pitch_deg,
+                config,
+                ridge,
+            );
             let gable_range = match pitched {
                 RoofStyle::HalfHip => Some(6..8),
+                RoofStyle::HalfHipGable => Some(4..6),
                 RoofStyle::Gable => Some(2..4),
                 RoofStyle::Shed => Some(1..4),
                 _ => None,
@@ -702,19 +867,42 @@ pub fn roof_part(
             if let Some(range) = gable_range {
                 let gables = faces.drain(range).collect();
                 roof = roof.child(Part::from_faces(
-                    "roof-gables", gables, colors.wall, Transform::IDENTITY, true, config,
+                    "roof-gables",
+                    gables,
+                    colors.wall,
+                    Transform::IDENTITY,
+                    true,
+                    config,
                 ));
             }
             let window_face = faces[0].clone();
-            let canopy =
-                Part::from_faces("кровля", faces, colors.roof, Transform::IDENTITY, true, config);
+            let canopy = Part::from_faces(
+                "кровля",
+                faces,
+                colors.roof,
+                Transform::IDENTITY,
+                true,
+                config,
+            );
             roof = roof.child(canopy);
 
             if dormer {
-                let protruding_ok = matches!(pitched, RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::Hip);
+                let protruding_ok = matches!(
+                    pitched,
+                    RoofStyle::Gable
+                        | RoofStyle::HalfHip
+                        | RoofStyle::HalfHipGable
+                        | RoofStyle::Hip
+                );
                 if protruding_ok && rng.random::<f32>() < 0.5 {
                     roof = roof.child(dormer_part(
-                        roof_length, roof_width, overhang, pitch_deg, ridge, colors, config,
+                        roof_length,
+                        roof_width,
+                        overhang,
+                        pitch_deg,
+                        ridge,
+                        colors,
+                        config,
                     ));
                 } else {
                     roof = roof.child(roof_window_part(&window_face, colors, config));
@@ -776,7 +964,9 @@ mod mounting_tests {
                 let rise = pitch.to_radians().tan() * wy;
                 let ridge = if matches!(style, RoofStyle::Gable | RoofStyle::HalfHip) {
                     0.35 * wy
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 let part = chimney_part(style, 6.4, wy, rise, ridge, &config);
                 for face in &part.faces[..4] {
                     let points = face.points();
@@ -785,7 +975,9 @@ mod mounting_tests {
                         let p = part.transform.transform_point(*local);
                         let expected = if style == RoofStyle::Flat {
                             config.roof_thickness
-                        } else { pitch_plane_z(style, wy, rise, ridge, p.y) };
+                        } else {
+                            pitch_plane_z(style, wy, rise, ridge, p.y)
+                        };
                         assert!((p.z - expected + 0.02).abs() < 0.001);
                     }
                 }
@@ -819,7 +1011,11 @@ mod detail_clearance_tests {
         let cfg = BuildingConfig::default();
         for style in [RoofStyle::Gable, RoofStyle::HalfHip, RoofStyle::Hip] {
             let wy = 2.9;
-            let ridge = if style == RoofStyle::Hip { 0.0 } else { 0.35 * wy };
+            let ridge = if style == RoofStyle::Hip {
+                0.0
+            } else {
+                0.35 * wy
+            };
             let chimney = chimney_part(style, 2.9, wy, 2.0, ridge, &cfg);
             let chimney_front = chimney.transform.translation.y - 0.21;
             // The dormer rear edge stays on the front side of the ridge.
@@ -842,10 +1038,10 @@ mod shed_surface_tests {
                 let mesh = roof_faces(RoofStyle::Shed, length, width, 0.4, pitch, &cfg, 0.0);
                 let n = mesh[0].normal();
                 let origin = mesh[0].points()[0];
-                let actual_height = |x: f32, y: f32| {
-                    origin.z - (n.x * (x - origin.x) + n.y * (y - origin.y)) / n.z
-                };
-                let chimney = chimney_part(RoofStyle::Shed, length * 0.5 + 0.4, wy, rise, 0.0, &cfg);
+                let actual_height =
+                    |x: f32, y: f32| origin.z - (n.x * (x - origin.x) + n.y * (y - origin.y)) / n.z;
+                let chimney =
+                    chimney_part(RoofStyle::Shed, length * 0.5 + 0.4, wy, rise, 0.0, &cfg);
                 for face in &chimney.faces[..4] {
                     let points = face.points();
                     let top = points.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
@@ -871,24 +1067,38 @@ mod dormer_style_tests {
     use generation_core::Seed;
 
     fn colors() -> BuildingColors {
-        BuildingColors { wall:Color::WHITE,roof:Color::WHITE,window:Color::WHITE,door:Color::WHITE,railing:Color::WHITE }
+        BuildingColors {
+            wall: Color::WHITE,
+            roof: Color::WHITE,
+            window: Color::WHITE,
+            door: Color::WHITE,
+            railing: Color::WHITE,
+        }
     }
 
     #[test]
     fn skylights_follow_real_roof_faces() {
         let cfg = BuildingConfig::default();
-        for style in [RoofStyle::Shed,RoofStyle::Gable,RoofStyle::Hip,RoofStyle::HalfHip,RoofStyle::Barrel] {
-            for pitch in [5.0,14.0,40.0] {
-                let faces = roof_faces(style,8.0,12.0,0.4,pitch,&cfg,0.0);
+        for style in [
+            RoofStyle::Shed,
+            RoofStyle::Gable,
+            RoofStyle::Hip,
+            RoofStyle::HalfHip,
+            RoofStyle::Barrel,
+        ] {
+            for pitch in [5.0, 14.0, 40.0] {
+                let faces = roof_faces(style, 8.0, 12.0, 0.4, pitch, &cfg, 0.0);
                 let face = &faces[0];
-                let skylight = roof_window_part(face,&colors(),&cfg);
+                let skylight = roof_window_part(face, &colors(), &cfg);
                 let normal = face.normal();
                 assert!((skylight.transform.rotation * Vec3::Z).dot(normal) > 0.999);
                 for part in &skylight.children {
                     for polygon in &part.faces {
                         for p in polygon.points() {
-                            let world = skylight.transform.transform_point(part.transform.transform_point(*p));
-                            let distance = (world-face.points()[0]).dot(normal);
+                            let world = skylight
+                                .transform
+                                .transform_point(part.transform.transform_point(*p));
+                            let distance = (world - face.points()[0]).dot(normal);
                             assert!(distance > 0.0 && distance < 0.08);
                         }
                     }
@@ -904,9 +1114,24 @@ mod dormer_style_tests {
         for seed in 0..40 {
             let mut cfg = BuildingConfig::default();
             cfg.seed = Seed::new(seed);
-            let roof = roof_part(10.0,8.0,3.0,RoofStyle::Gable,0.4,30.0,false,true,Facade::East,&colors(),&cfg);
+            let roof = roof_part(
+                10.0,
+                8.0,
+                3.0,
+                RoofStyle::Gable,
+                0.4,
+                30.0,
+                false,
+                true,
+                Facade::East,
+                &colors(),
+                &cfg,
+            );
             found_window |= roof.children.iter().any(|p| p.name == "roof-window");
-            found_extension |= roof.children.iter().any(|p| p.children.iter().any(|c| c.name == "dormer-gables"));
+            found_extension |= roof
+                .children
+                .iter()
+                .any(|p| p.children.iter().any(|c| c.name == "dormer-gables"));
         }
         assert!(found_window && found_extension);
     }
@@ -919,28 +1144,42 @@ mod integrated_dormer_tests {
     #[test]
     fn dormer_roof_joins_main_slope_before_ridge() {
         let cfg = BuildingConfig::default();
-        let colors = BuildingColors { wall:Color::WHITE,roof:Color::WHITE,window:Color::WHITE,door:Color::WHITE,railing:Color::WHITE };
-        for pitch in [5.0_f32,14.0,30.0,40.0] {
-            for ridge in [-1.0,0.0,1.0] {
-                let part = dormer_part(8.0,6.0,0.4,pitch,ridge,&colors,&cfg);
-                let slope = pitch.to_radians().tan()*3.4/(ridge+3.4);
-                let roof = part.children.iter().find(|p| p.name == "dormer-roof").unwrap();
+        let colors = BuildingColors {
+            wall: Color::WHITE,
+            roof: Color::WHITE,
+            window: Color::WHITE,
+            door: Color::WHITE,
+            railing: Color::WHITE,
+        };
+        for pitch in [5.0_f32, 14.0, 30.0, 40.0] {
+            for ridge in [-1.0, 0.0, 1.0] {
+                let part = dormer_part(8.0, 6.0, 0.4, pitch, ridge, &colors, &cfg);
+                let slope = pitch.to_radians().tan() * 3.4 / (ridge + 3.4);
+                let roof = part
+                    .children
+                    .iter()
+                    .find(|p| p.name == "dormer-roof")
+                    .unwrap();
                 for face in &roof.faces {
                     let points = face.points();
-                    let front = points.iter().map(|p| p.y).fold(f32::INFINITY,f32::min);
+                    let front = points.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
                     let mut joins = 0;
                     for p in points {
-                        assert!((*p-points[0]).dot(face.normal()).abs()<0.001);
+                        assert!((*p - points[0]).dot(face.normal()).abs() < 0.001);
                         if p.y > front + 0.001 {
-                            assert!((p.z-slope*(p.y+3.4)).abs()<0.001);
+                            assert!((p.z - slope * (p.y + 3.4)).abs() < 0.001);
                             assert!(p.y < ridge);
                             joins += 1;
                         }
                     }
-                    assert_eq!(joins,2);
+                    assert_eq!(joins, 2);
                 }
-                let walls = part.children.iter().find(|p| p.name == "dormer-walls").unwrap();
-                assert_eq!(walls.faces.len(),3);
+                let walls = part
+                    .children
+                    .iter()
+                    .find(|p| p.name == "dormer-walls")
+                    .unwrap();
+                assert_eq!(walls.faces.len(), 3);
             }
         }
     }
@@ -949,11 +1188,19 @@ mod integrated_dormer_tests {
 // Local ridge runs along X. The shed rises toward +Y, away from its runoff edge.
 fn entrance_roof_spin(style: RoofStyle, entrance: Facade, random_spin: u32) -> u32 {
     match style {
-        RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::Barrel => match entrance {
-            Facade::East => 0, Facade::North => 1, Facade::West => 2, Facade::South => 3,
-        },
+        RoofStyle::Gable | RoofStyle::HalfHip | RoofStyle::HalfHipGable | RoofStyle::Barrel => {
+            match entrance {
+                Facade::East => 0,
+                Facade::North => 1,
+                Facade::West => 2,
+                Facade::South => 3,
+            }
+        }
         RoofStyle::Shed => match entrance {
-            Facade::North => 0, Facade::West => 1, Facade::South => 2, Facade::East => 3,
+            Facade::North => 0,
+            Facade::West => 1,
+            Facade::South => 2,
+            Facade::East => 3,
         },
         _ => random_spin,
     }
@@ -967,15 +1214,15 @@ mod entrance_orientation_tests {
         for facade in Facade::ALL {
             for random in 0..4 {
                 for style in [RoofStyle::Gable, RoofStyle::HalfHip, RoofStyle::Barrel] {
-                    let spin = entrance_roof_spin(style,facade,random);
+                    let spin = entrance_roof_spin(style, facade, random);
                     let rotation = Quat::from_rotation_z(spin as f32 * std::f32::consts::FRAC_PI_2);
                     assert!((rotation * Vec3::X).dot(facade.outward()) > 0.999);
                     assert!((rotation * Vec3::Y).dot(facade.outward()).abs() < 0.001);
                 }
-                let spin = entrance_roof_spin(RoofStyle::Shed,facade,random);
+                let spin = entrance_roof_spin(RoofStyle::Shed, facade, random);
                 let rotation = Quat::from_rotation_z(spin as f32 * std::f32::consts::FRAC_PI_2);
                 assert!((rotation * -Vec3::Y).dot(facade.outward()) < -0.999);
-                assert_eq!(entrance_roof_spin(RoofStyle::Hip,facade,random),random);
+                assert_eq!(entrance_roof_spin(RoofStyle::Hip, facade, random), random);
             }
         }
     }
@@ -989,16 +1236,18 @@ mod balcony_orientation_tests {
     fn balconies_avoid_roof_runoff_facades() {
         for entrance in Facade::ALL {
             for style in RoofStyle::ALL {
-                let spin = entrance_roof_spin(style,entrance,0);
-                let rotation = Quat::from_rotation_z(spin as f32*std::f32::consts::FRAC_PI_2);
-                let candidates = balcony_facades(style,entrance);
-                if matches!(style,RoofStyle::Hip|RoofStyle::HalfHip) { assert_eq!(candidates, Facade::ALL.to_vec()); }
+                let spin = entrance_roof_spin(style, entrance, 0);
+                let rotation = Quat::from_rotation_z(spin as f32 * std::f32::consts::FRAC_PI_2);
+                let candidates = balcony_facades(style, entrance);
+                if matches!(style, RoofStyle::Hip | RoofStyle::HalfHip) {
+                    assert_eq!(candidates, Facade::ALL.to_vec());
+                }
                 for facade in candidates {
                     let outward = facade.outward();
-                    if matches!(style,RoofStyle::Gable|RoofStyle::Barrel) {
-                        assert!(outward.dot(rotation*Vec3::Y).abs()<0.001);
+                    if matches!(style, RoofStyle::Gable | RoofStyle::Barrel) {
+                        assert!(outward.dot(rotation * Vec3::Y).abs() < 0.001);
                     } else if style == RoofStyle::Shed {
-                        assert!(outward.dot(rotation*(-Vec3::Y))<0.001);
+                        assert!(outward.dot(rotation * (-Vec3::Y)) < 0.001);
                     }
                 }
             }

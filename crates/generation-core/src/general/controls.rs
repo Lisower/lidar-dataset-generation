@@ -51,7 +51,11 @@ fn handle_regeneration_key(
     if ui.0 || !keys.just_pressed(KeyCode::KeyR) {
         return;
     }
-    if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+    if keys.pressed(KeyCode::ShiftLeft)
+        || keys.pressed(KeyCode::ShiftRight)
+        || keys.just_pressed(KeyCode::ShiftLeft)
+        || keys.just_pressed(KeyCode::ShiftRight)
+    {
         // Тот же seed — повтор того же вида.
         writer.write(RegenerationRequest::same());
     } else {
@@ -72,4 +76,29 @@ fn handle_view_mode_key(
     }
     *view_mode = view_mode.toggled();
     writer.write(ViewModeToggle);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fast_shift_chord_keeps_seed_even_if_released_before_update() {
+        let mut app = App::new();
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ShiftLeft);
+        keys.press(KeyCode::KeyR);
+        keys.release(KeyCode::KeyR);
+        keys.release(KeyCode::ShiftLeft);
+        app.init_resource::<UiModalOpen>()
+            .insert_resource(keys)
+            .add_message::<RegenerationRequest>()
+            .add_systems(Update, handle_regeneration_key);
+        app.update();
+        let events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<RegenerationRequest>>()
+            .drain()
+            .collect();
+        assert_eq!(events, vec![RegenerationRequest::same()]);
+    }
 }

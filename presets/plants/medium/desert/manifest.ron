@@ -1,0 +1,6 @@
+(
+    id: "desert",
+    name: "Пустынные",
+    description: "",
+    is_group: true,
+)

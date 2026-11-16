@@ -1,10 +1,11 @@
 //! Композиция сцены: ландшафт и расстановка объектов.
 //!
-//! Одна сцена — это ландшафт 100×100 м и объекты на нём. Порядок расстановки
-//! и константы повторяют `terrains_generator::scene::generate_impl`, чтобы
-//! сцена в раннере вела себя как сцена в существующем просмотрщике; общим
-//! остаётся `PlacementMap`, который и проверяет пересечения, уклон, воду
-//! и края карты.
+//! Одна сцена — это ландшафт 100×100 м и объекты на нём. Правила расстановки
+//! повторяют `terrains_generator::scene::try_generate_from_data`: здания
+//! ставятся первыми с запасом под свес крыши, деревья занимают кроной место
+//! среди деревьев и кустов, но мешают траве только стволом, а трава
+//! заполняет остатки. Общим остаётся `PlacementMap`, который и проверяет
+//! пересечения, уклон, воду и края карты.
 //!
 //! Все кандидаты берутся из сида сцены, поэтому один и тот же
 //! `(рецепт, индекс)` даёт побайтово одинаковую сцену.
@@ -230,7 +231,7 @@ fn place_buildings(
         };
         let building = Building::generate(&cfg);
         let rules = PlacementRules {
-            radius: building.occupancy.shape.bounding_radius(),
+            radius: building_radius(&building),
             clearance: 1.5,
             max_slope_deg: recipe.max_slope_deg,
         };
@@ -259,6 +260,10 @@ fn place_buildings(
 /// через `Plant::generate` даёт пустые ветки, а дерева через `generate_tuft` —
 /// мусор. Поэтому пара проверяется по
 /// `PlantConfig.preset.plant_type()` до генерации и отсекается ошибкой.
+///
+/// Дерево занимает место кроной, а траве мешает только своим стволом:
+/// иначе под кронами не осталось бы ни одного пучка. У куста ствола нет,
+/// поэтому он блокирует и траву.
 fn place_plants(
     kind: ElementKind,
     catalog: &Catalog,
@@ -289,9 +294,17 @@ fn place_plants(
             clearance: plant_clearance(kind),
             max_slope_deg: 30.0,
         };
+        let trunk = match kind {
+            ElementKind::Tree => Some(trunk_radius(&plant)),
+            _ => None,
+        };
         for _ in 0..PLANT_ATTEMPTS {
             let candidate = vegetation_candidate(&mut rng, &clusters, cluster_radius);
-            if let Some(positioned) = map.try_place(candidate, rules) {
+            let positioned = match trunk {
+                Some(trunk) => map.try_place_tree(candidate, rules, trunk),
+                None => map.try_place(candidate, rules),
+            };
+            if let Some(positioned) = positioned {
                 placed.push(Placed {
                     position: positioned.position,
                     rotation: rng.random_range(0.0..TAU),
@@ -339,7 +352,7 @@ fn place_grass(
         };
         for _ in 0..GRASS_ATTEMPTS {
             let candidate = vegetation_candidate(&mut rng, &clusters, GRASS_CLUSTER_RADIUS_M);
-            if let Some(positioned) = map.try_place(candidate, rules) {
+            if let Some(positioned) = map.try_place_grass(candidate, rules) {
                 placed.push(Placed {
                     position: positioned.position,
                     rotation: rng.random_range(0.0..TAU),
@@ -385,6 +398,32 @@ fn plant_clearance(kind: ElementKind) -> f32 {
         ElementKind::Bush => 0.2,
         _ => 0.5,
     }
+}
+
+/// Радиус основания здания для расстановки.
+///
+/// Свес крыши выходит за габариты стен, поэтому одной занимаемой территории
+/// мало: соседнее здание должно отступать и от края кровли.
+fn building_radius(building: &Building) -> f32 {
+    building
+        .occupancy
+        .shape
+        .bounding_radius()
+        .max(building.size.truncate().length() * 0.5 + building.overhang + 0.5)
+}
+
+/// Радиус ствола: точка ствола, которая должна встать на грунт.
+///
+/// Крона занимает место в `objects`, но трава под ней расти может, поэтому
+/// дереву нужен ещё и ствол: в `ground` пускается только он.
+fn trunk_radius(plant: &Plant) -> f32 {
+    plant
+        .point_cloud
+        .points
+        .iter()
+        .filter(|p| p.position.z < 0.5)
+        .map(|p| p.position.truncate().length())
+        .fold(0.1f32, f32::max)
 }
 
 
@@ -638,6 +677,62 @@ mod tests {
         let a = scene_cloud(&compose(&catalog, &recipe, 0).unwrap());
         let b = scene_cloud(&compose(&catalog, &recipe, 0).unwrap());
         assert_eq!(to_xyz(&a), to_xyz(&b));
+    }
+
+    #[test]
+    fn building_radius_covers_the_roof_overhang() {
+        let catalog = load_catalog(&repo_presets());
+        let meta = catalog.meta("buildings", "rectangular").unwrap();
+        let cfg = load_preset_config::<BuildingConfig>(&meta).unwrap();
+        let building = Building::generate(&cfg);
+        let radius = building_radius(&building);
+        let half_diagonal = building.size.truncate().length() * 0.5;
+        assert!(
+            radius >= half_diagonal + building.overhang,
+            "свес крыши должен входить в радиус: {radius} < {}",
+            half_diagonal + building.overhang
+        );
+        assert!(radius >= building.occupancy.shape.bounding_radius());
+    }
+
+    #[test]
+    fn trunk_radius_is_smaller_than_the_crown() {
+        let catalog = load_catalog(&repo_presets());
+        let meta = catalog.meta("plants", "deciduous-tree").unwrap();
+        let cfg = load_preset_config::<PlantConfig>(&meta).unwrap();
+        let tree = Plant::generate(&cfg.with_seed(Seed::new(5)));
+        let trunk = trunk_radius(&tree);
+        assert!(trunk > 0.0 && trunk.is_finite(), "{trunk}");
+        assert!(
+            trunk < tree.extent,
+            "ствол ({trunk}) уже кроны ({})",
+            tree.extent
+        );
+    }
+
+    #[test]
+    fn grass_grows_under_a_tree_crown() {
+        let catalog = load_catalog(&repo_presets());
+        let recipe = Recipe {
+            scenes: 1,
+            seed: 4,
+            landscape: "plain".into(),
+            max_slope_deg: 30.0,
+            elements: vec![
+                ElementSpec {
+                    kind: ElementKind::Tree,
+                    preset_id: "deciduous-tree".into(),
+                    count: 2,
+                },
+                ElementSpec {
+                    kind: ElementKind::Grass,
+                    preset_id: "sparse-grass".into(),
+                    count: 60,
+                },
+            ],
+        };
+        let scene = compose(&catalog, &recipe, 0).unwrap();
+        assert_eq!(scene.grass.len(), 60, "крона не должна вытеснять траву");
     }
 }
 

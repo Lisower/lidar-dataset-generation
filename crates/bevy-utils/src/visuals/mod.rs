@@ -4,9 +4,11 @@
 //! поверхности, из которых генераторы делают облака точек, поэтому визуальная
 //! модель и облако не расходятся.
 
+pub mod lighting;
 pub mod materials;
 pub mod meshes;
 
+pub use lighting::{SUN_SHADOW_DISTANCE, sun_shadows};
 pub use materials::{material, material_double_sided};
 pub use meshes::{
     box_mesh, cone_mesh, mesh_from_polygons, n_gon_mesh, quad_mesh, triangle_mesh,

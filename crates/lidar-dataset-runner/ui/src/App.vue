@@ -49,7 +49,7 @@ const DEFAULT_RECIPE: Recipe = {
 };
 
 const CATALOGUE_MISSING =
-  "Каталог пресетов не найден. Приложению нужна папка presets рядом с исполняемым файлом или переменная окружения LIDAR_PRESETS_ROOT.";
+  "Каталог пресетов не найден. Приложению нужна папка presets рядом с исполняемым файлом или переменная окружения LIDAR_PRESETS.";
 
 const state = ref<RunState>("idle");
 const catalog = ref<Catalog>({ landscapes: [], buildings: [], plants: [] });

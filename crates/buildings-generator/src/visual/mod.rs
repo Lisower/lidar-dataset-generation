@@ -10,7 +10,7 @@ use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::*;
 use bevy_utils::visuals::materials::{material, material_double_sided};
 use bevy_utils::visuals::meshes::mesh_from_polygons;
-use generation_core::point_clouds::visual::{point_cloud_material, point_cloud_mesh};
+use generation_core::point_clouds::visual::spawn_point_cloud;
 
 use crate::generation::{Building, Part};
 
@@ -105,16 +105,8 @@ fn spawn_part(
 
     // Облако точек.
     if !part.cloud.is_empty() {
-        let mesh = meshes.add(point_cloud_mesh(&part.cloud));
-        let material = materials.add(point_cloud_material());
-        let cloud_entity = commands
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
-                PointCloudEntity,
-                Visibility::default(),
-            ))
-            .id();
+        let cloud_entity = spawn_point_cloud(commands, meshes, &part.cloud);
+        commands.entity(cloud_entity).insert(PointCloudEntity);
         entities.push(cloud_entity);
         commands.entity(entity).add_child(cloud_entity);
     }

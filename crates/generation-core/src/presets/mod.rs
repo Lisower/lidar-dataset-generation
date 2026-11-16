@@ -59,6 +59,107 @@ pub const SETTINGS_FILE: &str = "preset-selection.ron";
 /// Категории пресетов (подпапки `presets/`).
 pub const CATEGORIES: [&str; 4] = ["landscapes", "buildings", "plants", "terrains"];
 
+/// Разрешённые корни данных крейта: каталог пресетов и папка настроек.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataRoots {
+    /// Корень каталога пресетов (`…/presets`).
+    pub presets_root: PathBuf,
+    /// Папка, куда пишется выбор пресетов (`settings/preset-selection.ron`).
+    pub settings_dir: PathBuf,
+}
+
+/// Найти каталог `dir_name` рядом с исполняемым файлом, затем в рабочем каталоге.
+fn find_relative_dir(dir_name: &str) -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(dir_name);
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let candidate = cwd.join(dir_name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Первый существующий каталог: рядом с exe, затем в CWD; иначе `dev_dir`.
+///
+/// `env!("CARGO_MANIFEST_DIR")` зашивает в бинарь абсолютный путь сборочной
+/// машины (`G:\…`), которого на другом компьютере нет. Поэтому данные ищутся
+/// относительно самого приложения, а `dev_dir` остаётся запасным вариантом для
+/// запуска из исходников (`cargo run`).
+pub fn resolve_dir(dir_name: &str, dev_dir: PathBuf) -> PathBuf {
+    find_relative_dir(dir_name).unwrap_or(dev_dir)
+}
+
+/// Разрешить каталог пресетов и папку настроек для категории `category`.
+///
+/// Корень пресетов ищется в порядке:
+/// 1. `$LIDAR_PRESETS` — явное переопределение (настройки — рядом:
+///    `<корень>/../settings/<category>`);
+/// 2. `presets/` рядом с исполняемым файлом — переносимая сборка с флешки
+///    или установки (настройки — `<exe>/settings/<category>`);
+/// 3. `presets/` в текущем рабочем каталоге;
+/// 4. запасной путь разработки `dev_presets` (обычно
+///    `CARGO_MANIFEST_DIR/../../presets`), настройки — `dev_settings`.
+///
+/// Если найденный корень — тот же каталог, что `dev_presets` (запуск из
+/// исходников с корня воркспейса), настройки остаются в `dev_settings`.
+pub fn resolve_data_roots(
+    category: &str,
+    dev_presets: PathBuf,
+    dev_settings: PathBuf,
+) -> DataRoots {
+    let settings_beside = |presets_root: &Path| {
+        presets_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+            .join(SETTINGS_DIR)
+            .join(category)
+    };
+
+    if let Some(dir) = std::env::var_os("LIDAR_PRESETS") {
+        let presets_root = PathBuf::from(dir);
+        let settings_dir = settings_beside(&presets_root);
+        return DataRoots {
+            presets_root,
+            settings_dir,
+        };
+    }
+
+    match find_relative_dir(PRESETS_DIR) {
+        Some(presets_root) => {
+            // Запуск из исходников: переносимый корень совпадает с dev-путём —
+            // не заводим новую папку настроек, сохраняем привычное поведение.
+            let same_as_dev = match fs::canonicalize(&dev_presets) {
+                Ok(dev) => fs::canonicalize(&presets_root)
+                    .map(|root| root == dev)
+                    .unwrap_or(false),
+                Err(_) => false,
+            };
+            let settings_dir = if same_as_dev {
+                dev_settings
+            } else {
+                settings_beside(&presets_root)
+            };
+            DataRoots {
+                presets_root,
+                settings_dir,
+            }
+        }
+        None => DataRoots {
+            presets_root: dev_presets,
+            settings_dir: dev_settings,
+        },
+    }
+}
+
 /// Манифест пресета или группы — общая информация, не зависящая от генератора.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetManifest {
@@ -120,6 +221,8 @@ pub struct PresetMeta {
 /// без манифеста). Внутри — вложенные группы и пресеты.
 #[derive(Debug, Clone)]
 pub struct PresetGroup {
+    /// Actual directory, for unambiguous references to nested groups by path.
+    pub dir: PathBuf,
     /// Относительный путь папки от корня категории, напр. `water`.
     pub id: String,
     /// Имя папки (или имя из манифеста, если он есть).
@@ -280,8 +383,7 @@ impl PresetStore {
         let Some(first) = all.first() else {
             return false;
         };
-        self.selected.contains(&first.id)
-            && all.iter().all(|p| self.selected.contains(&p.id))
+        self.selected.contains(&first.id) && all.iter().all(|p| self.selected.contains(&p.id))
     }
 
     /// Переключить группу: выбрать/снять всю группу целиком.
@@ -345,7 +447,9 @@ impl PresetStore {
     /// (например `"tree"`, `"plain"`) — программы находят пресет нужного вида,
     /// не завязываясь на то, как названа его папка.
     pub fn by_kind(&self, kind: &str) -> Option<&PresetMeta> {
-        self.presets.iter().find(|p| !p.kind.is_empty() && p.kind == kind)
+        self.presets
+            .iter()
+            .find(|p| !p.kind.is_empty() && p.kind == kind)
     }
 }
 
@@ -356,11 +460,7 @@ impl PresetStore {
 /// категории с поиском по `id` из манифеста. Так поиск не зависит от того,
 /// в какой группе лежит пресет и как названа его папка: главное, чтобы манифест
 /// был оформлен правильно.
-pub fn resolve_cross_category(
-    category: &str,
-    id: &str,
-    presets_root: &Path,
-) -> Option<PresetMeta> {
+pub fn resolve_cross_category(category: &str, id: &str, presets_root: &Path) -> Option<PresetMeta> {
     let category_root = presets_root.join(category);
     // 1) id как относительный путь к папке пресета.
     let direct = category_root.join(id);
@@ -538,6 +638,7 @@ fn scan_group(
     flat.extend(local.iter().cloned());
     presets.extend(local);
     PresetGroup {
+        dir: dir.to_path_buf(),
         id,
         name,
         groups,
@@ -579,10 +680,15 @@ mod tests {
     ) {
         let dir = root.join(rel);
         fs::create_dir_all(&dir).unwrap();
-        let kind = kind.map(|k| format!("    kind: \"{k}\",\n")).unwrap_or_default();
-        let group = if is_group { "    is_group: true,\n" } else { "" };
-        let manifest =
-            format!("(\n    id: \"{id}\",\n    name: \"{name}\",\n{kind}{group})\n");
+        let kind = kind
+            .map(|k| format!("    kind: \"{k}\",\n"))
+            .unwrap_or_default();
+        let group = if is_group {
+            "    is_group: true,\n"
+        } else {
+            ""
+        };
+        let manifest = format!("(\n    id: \"{id}\",\n    name: \"{name}\",\n{kind}{group})\n");
         fs::write(dir.join(MANIFEST_FILE), manifest).unwrap();
         // Достаточно факта существования файла — содержимое при discovery не
         // парсится.
@@ -613,7 +719,14 @@ mod tests {
             false,
         );
         // Пресет прямо в корне категории.
-        write_entry(&presets, "plants/root-plant", "root-plant", "Корневое", None, false);
+        write_entry(
+            &presets,
+            "plants/root-plant",
+            "root-plant",
+            "Корневое",
+            None,
+            false,
+        );
 
         let store = PresetStore::discover("plants", &presets);
 
@@ -638,12 +751,36 @@ mod tests {
     fn by_kind_finds_presets_across_groups() {
         let root = tmp_dir("by_kind");
         let presets = root.join("presets");
-        write_entry(&presets, "plants/high/deciduous-tree", "deciduous-tree", "Дерево", Some("tree"), false);
-        write_entry(&presets, "plants/high/spruce", "spruce", "Ель", Some("tree"), false);
-        write_entry(&presets, "plants/medium/bush", "bush", "Куст", Some("bush"), false);
+        write_entry(
+            &presets,
+            "plants/high/deciduous-tree",
+            "deciduous-tree",
+            "Дерево",
+            Some("tree"),
+            false,
+        );
+        write_entry(
+            &presets,
+            "plants/high/spruce",
+            "spruce",
+            "Ель",
+            Some("tree"),
+            false,
+        );
+        write_entry(
+            &presets,
+            "plants/medium/bush",
+            "bush",
+            "Куст",
+            Some("bush"),
+            false,
+        );
 
         let store = PresetStore::discover("plants", &presets);
-        assert_eq!(store.by_kind("tree").map(|m| m.id.as_str()), Some("deciduous-tree"));
+        assert_eq!(
+            store.by_kind("tree").map(|m| m.id.as_str()),
+            Some("deciduous-tree")
+        );
         assert_eq!(store.by_kind("bush").map(|m| m.id.as_str()), Some("bush"));
         assert!(store.by_kind("missing").is_none());
     }
@@ -653,13 +790,31 @@ mod tests {
         let root = tmp_dir("cross");
         let presets = root.join("presets");
         // Пресет лежит НЕ по пути `plants/deciduous-tree`, а внутри группы.
-        write_entry(&presets, "plants/trees/deciduous-tree", "deciduous-tree", "Дерево", Some("tree"), false);
-        write_entry(&presets, "plants/low/tall-grass", "tall-grass", "Трава", None, false);
+        write_entry(
+            &presets,
+            "plants/trees/deciduous-tree",
+            "deciduous-tree",
+            "Дерево",
+            Some("tree"),
+            false,
+        );
+        write_entry(
+            &presets,
+            "plants/low/tall-grass",
+            "tall-grass",
+            "Трава",
+            None,
+            false,
+        );
 
         let meta = resolve_cross_category("plants", "deciduous-tree", &presets)
             .expect("пресет должен найтись по id манифеста");
         assert_eq!(meta.id, "deciduous-tree");
-        assert!(meta.dir.ends_with("trees/deciduous-tree"), "{}", meta.dir.display());
+        assert!(
+            meta.dir.ends_with("trees/deciduous-tree"),
+            "{}",
+            meta.dir.display()
+        );
 
         // По пути тоже работает.
         let by_path = resolve_cross_category("plants", "low/tall-grass", &presets)

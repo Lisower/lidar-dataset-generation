@@ -21,6 +21,6 @@ pub mod seeds;
 pub use general::*;
 pub use geometry::Polygon;
 pub use occupancy::Occupancy;
-pub use point_clouds::{Point, PointClass, PointCloud};
+pub use point_clouds::{Point, PointClass, PointCloud, PointCloudRenderPlugin, PointCloudTag};
 pub use presets::*;
 pub use seeds::{GlobalSeed, Seed};

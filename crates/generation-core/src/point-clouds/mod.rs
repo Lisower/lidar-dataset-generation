@@ -5,7 +5,9 @@ pub mod classes;
 pub mod cloud;
 pub mod export;
 pub mod primitives;
+pub mod render;
 pub mod visual;
 
 pub use classes::PointClass;
 pub use cloud::{Point, PointCloud};
+pub use render::{PointCloudRenderPlugin, PointCloudTag};

@@ -1,0 +1,6 @@
+(
+    id: "multi-entrance",
+    name: "Многоподъездный дом",
+    description: "Многоэтажный дом с 2–4 подъездами и повторяющимися этажами",
+    kind: "multi-entrance",
+)

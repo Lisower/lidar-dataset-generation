@@ -23,7 +23,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let resource_dir = app.path().resource_dir().ok();
-            let env_override = std::env::var_os("LIDAR_PRESETS_ROOT").map(Into::into);
+            let env_override = AppPaths::env_override(
+                std::env::var_os("LIDAR_PRESETS_ROOT").map(Into::into),
+                std::env::var_os("LIDAR_PRESETS").map(Into::into),
+            );
             let paths = AppPaths::resolve(resource_dir, env_override);
             match &paths.presets_root {
                 Some(root) => eprintln!("presets_root: {}", root.display()),

@@ -24,9 +24,29 @@ impl AppPaths {
     /// «нашли несуществующий каталог» выглядит в UI как пустой каталог без
     /// причины.
     pub fn resolve(resource_dir: Option<PathBuf>, env_override: Option<PathBuf>) -> Self {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf));
+        Self::resolve_from(resource_dir, exe_dir.as_deref(), env_override)
+    }
+
+    /// Найти каталог пресетов при известном каталоге exe.
+    ///
+    /// Пресеты ищутся рядом с исполняемым файлом — так работают переносимые
+    /// сборки, где `presets/` лежит на флешке рядом с бинарником, и так же
+    /// ищут их остальные приложения проекта. Потом идёт каталог ресурсов
+    /// бандла и каталог воркспейса для запуска из исходников.
+    pub fn resolve_from(
+        resource_dir: Option<PathBuf>,
+        exe_dir: Option<&Path>,
+        env_override: Option<PathBuf>,
+    ) -> Self {
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(dir) = env_override {
             candidates.push(dir);
+        }
+        if let Some(dir) = exe_dir {
+            candidates.push(dir.join("presets"));
         }
         if let Some(resources) = &resource_dir {
             candidates.push(resources.join("presets"));
@@ -38,6 +58,15 @@ impl AppPaths {
 
         let presets_root = candidates.into_iter().find(|path| path.is_dir());
         Self { presets_root }
+    }
+
+    /// Переопределение каталога пресетов из окружения.
+    ///
+    /// `LIDAR_PRESETS_ROOT` — своё имя раннера, `LIDAR_PRESETS` — общее имя
+    /// проекта: пользователь, задавший общий корень для генераторов, ожидает,
+    /// что его увидит и раннер.
+    pub fn env_override(root: Option<PathBuf>, shared: Option<PathBuf>) -> Option<PathBuf> {
+        root.or(shared)
     }
 
     /// Корень каталога пресетов или каталог воркспейса как последний вариант.
@@ -99,9 +128,7 @@ impl AppState {
 
     /// Каталог вывода по умолчанию: `<документы>/lidar-datasets`.
     pub fn default_output_dir(documents: Option<&Path>) -> PathBuf {
-        let base = documents
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::env::temp_dir());
+        let base = documents.map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
         base.join("lidar-datasets")
     }
 }
@@ -178,5 +205,36 @@ mod tests {
         assert_eq!(paths.presets_root, Some(root.clone()));
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn presets_next_to_the_exe_win_over_the_bundle() {
+        let exe_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/state-exe-dir");
+        let _ = std::fs::remove_dir_all(&exe_dir);
+        std::fs::create_dir_all(exe_dir.join("presets/landscapes")).unwrap();
+        std::fs::create_dir_all(exe_dir.join("resources/presets/landscapes")).unwrap();
+
+        let paths = AppPaths::resolve_from(
+            Some(exe_dir.join("resources")),
+            Some(&exe_dir),
+            None,
+        );
+        assert_eq!(paths.presets_root, Some(exe_dir.join("presets")));
+
+        std::fs::remove_dir_all(&exe_dir).unwrap();
+    }
+
+    #[test]
+    fn env_names_fall_back_to_the_shared_variable() {
+        assert_eq!(
+            AppPaths::env_override(Some("root".into()), Some("shared".into())),
+            Some(PathBuf::from("root"))
+        );
+        assert_eq!(
+            AppPaths::env_override(None, Some("shared".into())),
+            Some(PathBuf::from("shared"))
+        );
+        assert_eq!(AppPaths::env_override(None, None), None);
     }
 }
