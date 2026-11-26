@@ -1,17 +1,12 @@
-# --- Сборка ---
 /target
 **/*.rs.bk
 *.pdb
-
-# --- Редакторы ---
 .idea/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
 *.swp
 *~
-
-# --- Данные генерации ---
 /crates/*/assets/export/
 /assets/export/
 *.xyz
@@ -19,11 +14,8 @@
 *.laz
 *.ply
 *.pcd
-
-# --- Локальные выборы демо-пресетов (генерируются в рантайме) ---
 /crates/*/settings/
-
-# --- Локальные настройки Obsidian ---
+local/
 wiki/.obsidian/workspace.json
 wiki/.obsidian/workspace-mobile.json
 wiki/.obsidian/workspace*.json
@@ -31,14 +23,14 @@ wiki/.obsidian/cache/
 wiki/.obsidian/graph.json
 wiki/.obsidian/plugins/*/data.json
 wiki/.trash/
-
-# Локальные заметки, которые не нужны в общей вики
 wiki/local/
-
-# Локальные файлы, которые не нужно публиковать (для общения и обсуждения с AI-агентами, например, или legacy для прототипа этого проекта)
-local/
-
-# --- ОС ---
 Thumbs.db
 desktop.ini
 .DS_Store
+crates/lidar-dataset-runner/ui/node_modules/
+crates/lidar-dataset-runner/ui/dist/*
+!crates/lidar-dataset-runner/ui/dist/index.html
+crates/lidar-dataset-runner/gen/
+crates/lidar-dataset-runner/.tauri/
+/dataset/
+/installers/

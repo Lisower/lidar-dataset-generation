@@ -3,6 +3,28 @@ name = "lidar-dataset-runner"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "lidar_dataset_runner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lidar-dataset-runner"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
 [dependencies]
+generation-core = { path = "../generation-core" }
+landscapes-generator = { path = "../landscapes-generator" }
+buildings-generator = { path = "../buildings-generator" }
+plants-generator = { path = "../plants-generator" }
+terrains-generator = { path = "../terrains-generator" }
 bevy.workspace = true
 rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ron.workspace = true
+thiserror.workspace = true
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true

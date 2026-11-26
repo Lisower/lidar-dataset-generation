@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LiDAR Dataset Runner",
+  "version": "0.1.0",
+  "identifier": "ru.lidar.datasetrunner",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "LiDAR Dataset Runner",
+        "width": 1200,
+        "height": 800
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "category": "Utility",
+    "publisher": "Lisower",
+    "copyright": "© 2026 Lisower",
+    "shortDescription": "Генератор датасетов LiDAR",
+    "longDescription": "Собирает сцены из демо-пресетов и экспортирует их облаками точек для обучения и проверки LiDAR-моделей.",
+    "resources": { "../../presets/": "presets/" }
+  }
+}

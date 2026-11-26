@@ -35,8 +35,7 @@ impl From<Vec3> for Point {
 /// на сущности облака точек.
 ///
 /// Координаты точек держатся в локальной системе координат родительской
-/// части; мировая позиция получается наследованием `Transform`'а (см. wiki
-/// «Создание объекта»).
+/// части; мировая позиция получается наследованием `Transform`'а.
 #[derive(Component, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PointCloud {
     /// Точки облака.
