@@ -13,7 +13,7 @@ use generation_core::{UiModalOpen, general::RegenerationRequest, presets::Preset
 use rand::RngExt;
 use std::{
     io::{BufWriter, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 #[derive(Clone, Debug)]
@@ -362,10 +362,7 @@ pub fn run(options: DemoOptions) -> Result<(), Box<dyn std::error::Error>> {
         .insert_resource(demo)
         .add_message::<RegenerationRequest>()
         .add_plugins((
-            DefaultPlugins.set(AssetPlugin {
-                file_path: assets_root.to_string_lossy().into_owned(),
-                ..default()
-            }),
+            DefaultPlugins.set(bevy_utils::asset_plugin!("../buildings-generator/assets")),
             PointCloudRenderPlugin,
             CameraPlugin::new(focus, radius),
             selector,

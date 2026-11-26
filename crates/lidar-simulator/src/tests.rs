@@ -529,4 +529,11 @@ fn all_generator_categories_scan_and_export_shared_xyz() {
         );
         std::fs::remove_file(path).unwrap();
     }
+fn assets_dir_points_at_buildings_fonts() {
+    let dir = bevy_utils::assets::assets_dir(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        "../buildings-generator/assets",
+        None,
+    );
+    assert!(dir.join("fonts/Roboto-Regular.ttf").is_file(), "{}", dir.display());
 }

@@ -1,3 +1,3 @@
 fn main() {
-    println!("Заглушка");
+    lidar_dataset_runner::run();
 }

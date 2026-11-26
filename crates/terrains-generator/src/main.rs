@@ -118,15 +118,7 @@ fn main() {
     };
     App::new()
         .add_plugins((
-            DefaultPlugins.set(AssetPlugin {
-                file_path: generation_core::presets::resolve_dir(
-                    "assets",
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-                )
-                .to_string_lossy()
-                .into_owned(),
-                ..default()
-            }),
+            DefaultPlugins.set(bevy_utils::asset_plugin!("assets")),
             PointCloudRenderPlugin,
             GenerationControlsPlugin { initial_seed: seed },
             CameraPlugin::new(Vec3::new(0.0, 4.0, 0.0), 145.0),
