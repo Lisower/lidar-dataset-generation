@@ -1,0 +1,6 @@
+(
+    id: "wheat",
+    name: "пшеница",
+    description: "",
+    kind: "wheat",
+)

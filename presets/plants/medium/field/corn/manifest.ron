@@ -1,0 +1,6 @@
+(
+    id: "corn",
+    name: "кукуруза",
+    description: "",
+    kind: "corn",
+)

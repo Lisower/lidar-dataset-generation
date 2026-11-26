@@ -66,6 +66,8 @@ pub enum PlantPreset {
     Yucca,
     /// Агава: низкая прикорневая розетка из толстых мясистых заострённых листьев.
     Agave,
+    /// Дуб: мощное лиственное дерево с толстым стволом и широкой раскидистой кроной.
+    Oak,
     /// Куст: густая листва от самой земли.
     Bush,
     /// Можжевельник: низкий раскидистый хвойный кустарник с густой кроной.
@@ -74,11 +76,17 @@ pub enum PlantPreset {
     TallGrass,
     /// Низкая редкая трава (жидкие пучки).
     SparseGrass,
+    /// Пшеница: высокие тонкие стебли с узкими листьями и колосьями.
+    Wheat,
+    /// Подсолнечник: высокий стебель с крупными листьями и цветочной корзинкой.
+    Sunflower,
+    /// Кукуруза: высокий стебель с широкими листьями и початками.
+    Corn,
 }
 
 impl PlantPreset {
     /// Все пресеты в порядке переключения.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 19] = [
         Self::DeciduousTree,
         Self::Spruce,
         Self::Fir,
@@ -90,10 +98,14 @@ impl PlantPreset {
         Self::CactusSmall,
         Self::Yucca,
         Self::Agave,
+        Self::Oak,
         Self::Bush,
         Self::Juniper,
         Self::TallGrass,
         Self::SparseGrass,
+        Self::Wheat,
+        Self::Sunflower,
+        Self::Corn,
     ];
 
     /// Название для панели информации.
@@ -110,10 +122,14 @@ impl PlantPreset {
             Self::CactusSmall => "кактус маленький",
             Self::Yucca => "юкка",
             Self::Agave => "агава",
+            Self::Oak => "дуб",
             Self::Bush => "куст",
             Self::Juniper => "можжевельник",
             Self::TallGrass => "высокая трава",
             Self::SparseGrass => "низкая трава",
+            Self::Wheat => "пшеница",
+            Self::Sunflower => "подсолнух",
+            Self::Corn => "кукуруза",
         }
     }
 
@@ -128,9 +144,10 @@ impl PlantPreset {
             | Self::Palm
             | Self::PalmCoconuts
             | Self::CactusLarge
-            | Self::Yucca => PlantType::Tree,
+            | Self::Yucca
+            | Self::Oak => PlantType::Tree,
             Self::CactusSmall | Self::Agave | Self::Bush | Self::Juniper => PlantType::Bush,
-            Self::TallGrass | Self::SparseGrass => PlantType::Grass,
+            Self::TallGrass | Self::SparseGrass | Self::Wheat | Self::Sunflower | Self::Corn => PlantType::Grass,
         }
     }
 
@@ -150,10 +167,14 @@ impl PlantPreset {
             Self::CactusSmall => "cactus-small",
             Self::Yucca => "yucca",
             Self::Agave => "agave",
+            Self::Oak => "oak",
             Self::Bush => "bush",
             Self::Juniper => "juniper",
             Self::TallGrass => "tall-grass",
             Self::SparseGrass => "sparse-grass",
+            Self::Wheat => "wheat",
+            Self::Sunflower => "sunflower",
+            Self::Corn => "corn",
         }
     }
 
@@ -179,10 +200,14 @@ impl PlantPreset {
             "cactussmall" | "cactus-small" | "кактус маленький" => Some(Self::CactusSmall),
             "yucca" | "юкка" => Some(Self::Yucca),
             "agave" | "агава" => Some(Self::Agave),
+            "oak" | "дуб" => Some(Self::Oak),
             "bush" | "куст" => Some(Self::Bush),
             "juniper" | "можжевельник" => Some(Self::Juniper),
             "tallgrass" | "высокая трава" | "трава" => Some(Self::TallGrass),
             "sparsegrass" | "низкая трава" => Some(Self::SparseGrass),
+            "wheat" | "пшеница" => Some(Self::Wheat),
+            "sunflower" | "подсолнух" => Some(Self::Sunflower),
+            "corn" | "кукуруза" => Some(Self::Corn),
             _ => None,
         }
     }

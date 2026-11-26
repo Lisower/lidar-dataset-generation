@@ -31,7 +31,9 @@ pub struct Foliage {
 
 /// Построить крону растения из скелета (детерминированно от seed).
 pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage {
-    if config.preset == PlantPreset::Spruce {
+    if config.preset == PlantPreset::Oak {
+        build_oak_leaves(skeleton, config)
+    } else if config.preset == PlantPreset::Spruce {
         build_spruce_needles(skeleton, config)
     } else if config.preset == PlantPreset::Juniper {
         build_juniper_needles(skeleton, config)
@@ -51,6 +53,158 @@ pub fn build_foliage(skeleton: &PlantSkeleton, config: &PlantConfig) -> Foliage 
     } else {
         build_leafy(skeleton, config)
     }
+}
+
+/// Плотная крона дуба.
+///
+/// Листва располагается не только на самых концах ветвей,
+/// а вдоль тонких ветвей верхней части скелета.
+/// Толстые основные ветви и ствол остаются хорошо видимыми.
+fn build_oak_leaves(
+    skeleton: &PlantSkeleton,
+    config: &PlantConfig,
+) -> Foliage {
+    let mut foliage = Foliage::default();
+    let mut rng = config.seed.with_label("oak_leaves").rng();
+    let cfg = &config.foliage;
+
+    for segment in &skeleton.segments {
+        let from = skeleton.points[segment.from];
+        let to = skeleton.points[segment.to];
+
+        // На ствол и крупные скелетные ветви листья не ставим.
+        // Листва начинается только на более мелком ветвлении.
+        if to.level < 3 {
+            continue;
+        }
+
+        let branch = to.position - from.position;
+        let length = branch.length();
+
+        if length <= 0.001 {
+            continue;
+        }
+
+        let dir = branch.normalize();
+
+        // Чем тоньше ветвь, тем плотнее на ней листва.
+        // На промежуточных ветвях оставляем немного зелени,
+        // а концы кроны заполняем значительно плотнее.
+        let density = if to.level >= 5 {
+            0.08_f32
+        } else if to.level == 4 {
+            0.11_f32
+        } else {
+            0.11_f32
+        };
+
+        let anchors =
+            ((length / density).ceil() as usize).clamp(1, 8);
+
+        for anchor_index in 0..anchors {
+            let t =
+                (anchor_index as f32 + 0.5) / anchors as f32;
+
+            let center = from.position + branch * t;
+
+            // Строим локальный базис вокруг ветви.
+            let side0 = dir.cross(Vec3::Z).normalize_or_zero();
+
+            let side0 = if side0 == Vec3::ZERO {
+                Vec3::X
+            } else {
+                side0
+            };
+
+            let pitch =
+                dir.cross(side0).normalize_or_zero();
+
+            // На молодых веточках формируем небольшие группы листьев.
+            let leaves_here = if to.level >= 5 {
+                5usize
+            } else if to.level == 4 {
+                12usize
+            } else {
+                10usize
+            };
+
+            for leaf_index in 0..leaves_here {
+                let angle =
+                    leaf_index as f32
+                        * std::f32::consts::TAU
+                        / leaves_here as f32
+                        + rng.random_range(-0.45_f32..=0.45_f32);
+
+                let radial =
+                    side0 * angle.cos()
+                        + pitch * angle.sin();
+
+                // Листья немного отнесены от самой ветки,
+                // поэтому образуют объёмные зелёные массы.
+                let offset =
+                    rng.random_range(0.20_f32..=0.75_f32);
+
+                let along =
+                    rng.random_range(-0.85_f32..=0.85_f32);
+
+                let center =
+                    center
+                        + radial * offset
+                        + dir * along;
+
+                let outward =
+                    (
+                        radial * 0.70
+                            + dir * rng.random_range(0.15_f32..=0.40_f32)
+                            + Vec3::Z * rng.random_range(-0.10_f32..=0.25_f32)
+                    )
+                    .normalize_or_zero();
+
+                let leaf_length =
+                    cfg.length
+                        * rng.random_range(0.85_f32..=1.15_f32);
+
+                let leaf_width =
+                    cfg.width
+                        * rng.random_range(0.85_f32..=1.15_f32);
+
+                let tangent =
+                    outward.cross(dir).normalize_or_zero();
+
+                let tangent = if tangent == Vec3::ZERO {
+                    side0
+                } else {
+                    tangent
+                };
+
+                let c0 =
+                    center + outward * leaf_length;
+
+                let c1 =
+                    center + tangent * leaf_width * 0.5;
+
+                let c2 =
+                    center - outward * leaf_length * 0.30;
+
+                let c3 =
+                    center - tangent * leaf_width * 0.5;
+
+                let [c0, c1, c2, c3] =
+                    on_ground([c0, c1, c2, c3]);
+
+                foliage.faces.push(
+                    Polygon::quad(c0, c1, c2, c3),
+                );
+
+                foliage.cloud.push(c0);
+                foliage.cloud.push(center);
+
+                foliage.count += 1;
+            }
+        }
+    }
+
+    foliage
 }
 
 /// Хвоя ели.
@@ -533,9 +687,48 @@ fn build_agave_leaves(
                 tip,
             ));
 
-            foliage.cloud.push(base);
-            foliage.cloud.push(middle);
-            foliage.cloud.push(tip);
+            // Облако точек повторяет поверхность каждого мясистого листа агавы.
+            // Точки идут от широкого основания через середину к острому кончику.
+            let cloud_points_per_leaf = 15usize;
+
+            for point_index in 0..cloud_points_per_leaf {
+                let t =
+                    (point_index as f32 + 0.5) / cloud_points_per_leaf as f32;
+
+                // Центральная линия точно следует геометрии листа:
+                // основание -> середина -> кончик.
+                let center_line = if t <= 0.58 {
+                    let local_t = t / 0.58;
+                    base.lerp(middle, local_t)
+                } else {
+                    let local_t = (t - 0.58) / 0.42;
+                    middle.lerp(tip, local_t)
+                };
+
+                // Агава широкая у основания и в средней части,
+                // после чего лист быстро сужается к острию.
+                let width_factor = if t <= 0.58 {
+                    0.85 + (t / 0.58) * 0.15
+                } else {
+                    1.0 - ((t - 0.58) / 0.42)
+                };
+
+                let local_half_width = half_width * width_factor;
+
+                let sideways =
+                    rng.random_range(-local_half_width..=local_half_width);
+
+                // Небольшой подъём к центральному гребню сохраняет
+                // характерную мясистую форму листа.
+                let ridge_height =
+                    0.045 + 0.040 * (1.0 - (2.0 * t - 1.0).abs());
+
+                foliage.cloud.push(
+                    center_line
+                        + tangent * sideways
+                        + Vec3::Z * ridge_height,
+                );
+            }
 
             foliage.count += 1;
         }
@@ -795,9 +988,42 @@ fn build_yucca_leaves(
                 tip,
             ));
 
-            foliage.cloud.push(base);
-            foliage.cloud.push(middle);
-            foliage.cloud.push(tip);
+            // Облако точек повторяет реальную поверхность листа юкки.
+            // Точки распределяются от основания через середину к кончику.
+            let cloud_points_per_leaf = 9usize;
+
+            for point_index in 0..cloud_points_per_leaf {
+                let t = (point_index as f32 + 0.5) / cloud_points_per_leaf as f32;
+
+                // Центральная линия следует тому же изгибу,
+                // что и визуальная геометрия листа.
+                let center_line = if t <= 0.55 {
+                    let local_t = t / 0.55;
+                    base.lerp(middle, local_t)
+                } else {
+                    let local_t = (t - 0.55) / 0.45;
+                    middle.lerp(tip, local_t)
+                };
+
+                // Ширина возрастает к середине листа
+                // и постепенно сужается к острому кончику.
+                let width_factor = if t <= 0.55 {
+                    0.55 + (t / 0.55) * 0.45
+                } else {
+                    1.0 - ((t - 0.55) / 0.45)
+                };
+
+                let local_half_width = half_width * width_factor;
+
+                // Несколько точек поперёк листовой пластины,
+                // чтобы облако показывало не линию, а сам лист.
+                let sideways =
+                    rng.random_range(-local_half_width..=local_half_width);
+
+                foliage.cloud.push(
+                    center_line + tangent * sideways,
+                );
+            }
 
             foliage.count += 1;
         }

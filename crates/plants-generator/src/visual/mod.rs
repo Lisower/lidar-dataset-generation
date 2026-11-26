@@ -179,6 +179,30 @@ pub fn spawn_plant_scene(
 /// в один общий меш (позиция и поворот каждого пучка вплавлены в вершины под
 /// локальную ось Z вверх; общий поворот Z→Y даст корень сцены). Материал
 /// визуального меша и материал облака — по одному на весь луг.
+/// 
+
+fn collect_part_faces(
+    part: &Part,
+    parent_mat: Mat4,
+    faces_by_color: &mut Vec<(Color, Vec<Polygon>)>,
+) {
+    let mat = parent_mat * part.transform.to_matrix();
+
+    if !part.faces.is_empty() {
+        let transformed: Vec<Polygon> = part
+            .faces
+            .iter()
+            .map(|poly| transform_polygon(poly, mat))
+            .collect();
+
+        faces_by_color.push((part.color, transformed));
+    }
+
+    for child in &part.children {
+        collect_part_faces(child, mat, faces_by_color);
+    }
+}
+
 fn spawn_grass_field(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -187,7 +211,7 @@ fn spawn_grass_field(
     tufts: &[PlacedTuft],
     entities: &mut Vec<Entity>,
 ) {
-    let mut faces: Vec<Polygon> = Vec::new();
+    let mut faces_by_color: Vec<(Color, Vec<Polygon>)> = Vec::new();
     let mut cloud = PointCloud::default();
     if let Some(first) = tufts.first() {
         cloud.default_class = first.tuft.part.cloud.default_class;
@@ -197,9 +221,11 @@ fn spawn_grass_field(
             Quat::from_rotation_z(placed.rotation),
             Vec3::new(placed.position.x, placed.position.y, 0.0),
         );
-        for poly in &placed.tuft.part.faces {
-            faces.push(transform_polygon(poly, mat));
-        }
+        collect_part_faces(
+            &placed.tuft.part,
+            mat,
+            &mut faces_by_color,
+        );
         // Сохраняем классы точек: трансформируем копию и сливаем в общее облако.
         let mut c = placed.tuft.part.cloud.clone();
         c.transform_by(mat);
@@ -217,9 +243,14 @@ fn spawn_grass_field(
     entities.push(entity);
     commands.entity(root).add_child(entity);
 
-    if !faces.is_empty() {
+    for (color, faces) in faces_by_color {
+        if faces.is_empty() {
+            continue;
+        }
+
         let mesh = meshes.add(mesh_from_polygons(&faces));
-        let material = materials.add(material_double_sided(tufts[0].tuft.part.color));
+        let material = materials.add(material_double_sided(color));
+
         let mesh_entity = commands
             .spawn((
                 Mesh3d(mesh),
@@ -228,6 +259,7 @@ fn spawn_grass_field(
                 Visibility::default(),
             ))
             .id();
+
         entities.push(mesh_entity);
         commands.entity(entity).add_child(mesh_entity);
     }
