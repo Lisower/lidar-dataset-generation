@@ -263,6 +263,49 @@ pub struct PresetStore {
 }
 
 impl PresetStore {
+    /// Общий каталог для инструментов, работающих со всеми генераторами.
+    /// Идентификаторы имеют вид `категория/id`, чтобы исключить коллизии.
+    pub fn discover_all(presets_root: &Path) -> Self {
+        fn qualify(group: &mut PresetGroup, category: &str) {
+            group.id = format!("{category}/{}", group.id);
+            for meta in &mut group.presets {
+                meta.id = format!("{category}/{}", meta.id);
+            }
+            for child in &mut group.groups {
+                qualify(child, category);
+            }
+        }
+        let mut store = Self {
+            category: String::new(),
+            root: presets_root.into(),
+            root_presets: Vec::new(),
+            groups: Vec::new(),
+            presets: Vec::new(),
+            selected: BTreeSet::new(),
+        };
+        for category in CATEGORIES {
+            let mut source = Self::discover(category, presets_root);
+            for meta in &mut source.presets {
+                meta.id = format!("{category}/{}", meta.id);
+            }
+            for meta in &mut source.root_presets {
+                meta.id = format!("{category}/{}", meta.id);
+            }
+            for group in &mut source.groups {
+                qualify(group, category);
+            }
+            store.presets.extend(source.presets);
+            store.groups.push(PresetGroup {
+                dir: source.root,
+                id: category.into(),
+                name: category.into(),
+                groups: source.groups,
+                presets: source.root_presets,
+            });
+        }
+        store
+    }
+
     /// Просканировать категорию `category` под `presets_root` (`presets/`).
     ///
     /// Не читает сохранённый выбор — его загружает [`PresetStore::load_selection`].

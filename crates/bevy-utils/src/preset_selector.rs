@@ -43,7 +43,7 @@ use crate::ui_window::{
 /// Плагин окна выбора пресетов одной категории (`landscapes`, `plants`,
 /// `buildings`, `terrains`).
 pub struct PresetSelectorPlugin {
-    /// Категория: подпапка `presets/`.
+    /// Категория: подпапка `presets/`; пустая строка — все категории.
     pub category: &'static str,
     /// Корень всех пресетов (`.../presets`).
     pub presets_root: PathBuf,
@@ -91,7 +91,11 @@ struct PresetListScroll;
 
 impl Plugin for PresetSelectorPlugin {
     fn build(&self, app: &mut App) {
-        let mut store = PresetStore::discover(self.category, &self.presets_root);
+        let mut store = if self.category.is_empty() {
+            PresetStore::discover_all(&self.presets_root)
+        } else {
+            PresetStore::discover(self.category, &self.presets_root)
+        };
         store.load_selection(&self.settings_dir);
         if store.presets.is_empty() {
             warn!(
