@@ -350,6 +350,7 @@ fn generate_sunflower_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
     let mut green_faces: Vec<Polygon> = Vec::new();
     let mut yellow_faces: Vec<Polygon> = Vec::new();
     let mut brown_faces: Vec<Polygon> = Vec::new();
+    let mut receptacle_faces: Vec<Polygon> = Vec::new();
 
     // Подсолнечник слегка отклоняется от вертикали.
     let lean_angle = rng.random_range(0.0..std::f32::consts::TAU);
@@ -445,118 +446,204 @@ fn generate_sunflower_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
 
     let flower_up = flower_forward.cross(flower_right).normalize();
 
-    // Тёмная центральная часть корзинки.
-    let disk_radius = flower_radius * 0.55;
+    // Корзинка: передний диск, перекрытые основания лепестков и выпуклая задняя чашечка.
+    // Все размеры привязаны к радиусу цветка, а не к фиксированным сантиметрам.
+    let disk_radius = flower_radius * 0.57;
+    let disk_center = flower_center + flower_forward * (flower_radius * 0.115);
+    let petal_center = flower_center + flower_forward * (flower_radius * 0.035);
 
-    for i in 0..petals {
-        let a0 = std::f32::consts::TAU * i as f32 / petals as f32;
-        let a1 = std::f32::consts::TAU * (i + 1) as f32 / petals as f32;
-
-        let p0 = flower_center;
-
-        let p1 = flower_center
-            + flower_right * (a0.cos() * disk_radius)
+    // Диск расположен впереди лепестков, поэтому зелёная чашечка не образует
+    // видимую полоску между коричневой сердцевиной и жёлтым венчиком.
+    let disk_segments = 64usize;
+    for i in 0..disk_segments {
+        let a0 = std::f32::consts::TAU * i as f32 / disk_segments as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / disk_segments as f32;
+        let p0 = disk_center;
+        let p1 = disk_center + flower_right * (a0.cos() * disk_radius)
             + flower_up * (a0.sin() * disk_radius);
-
-        let p2 = flower_center
-            + flower_right * (a1.cos() * disk_radius)
+        let p2 = disk_center + flower_right * (a1.cos() * disk_radius)
             + flower_up * (a1.sin() * disk_radius);
-
-        brown_faces.push(
-            Polygon::triangle(p0, p1, p2)
-                .oriented(flower_forward),
-        );
+        brown_faces.push(Polygon::triangle(p0, p1, p2).oriented(flower_forward));
     }
 
-    // Крупные лепестки вокруг центрального диска.
+    // Задняя часть не плоская: 3 концентрических кольца образуют чашу.
+    // Её край немного меньше диска и скрыт основаниями лепестков.
+    let rim_segments = 64usize;
+    let cup_rings: [(f32, f32); 4] = [
+        (0.0, -0.31),
+        (0.40, -0.29),
+        (0.76, -0.20),
+        (0.94, -0.07),
+    ];
+    let cup_point = |radius_scale: f32, depth_scale: f32, angle: f32| {
+        flower_center
+            + flower_forward * (flower_radius * depth_scale)
+            + (flower_right * angle.cos() + flower_up * angle.sin())
+                * (disk_radius * radius_scale)
+    };
+    for ring in 0..(cup_rings.len() - 1) {
+        let (inner_r, inner_z) = cup_rings[ring];
+        let (outer_r, outer_z) = cup_rings[ring + 1];
+        for i in 0..rim_segments {
+            let a0 = std::f32::consts::TAU * i as f32 / rim_segments as f32;
+            let a1 = std::f32::consts::TAU * (i + 1) as f32 / rim_segments as f32;
+            let p0 = cup_point(inner_r, inner_z, a0);
+            let p1 = cup_point(outer_r, outer_z, a0);
+            let p2 = cup_point(outer_r, outer_z, a1);
+            let p3 = cup_point(inner_r, inner_z, a1);
+            if ring == 0 {
+                receptacle_faces.push(Polygon::triangle(p0, p1, p2).oriented(-flower_forward));
+            } else {
+                receptacle_faces.push(Polygon::quad(p0, p1, p2, p3).oriented(-flower_forward));
+            }
+        }
+    }
+
+    // Плавное крепление стебля к центральной точке задней чашечки.
+    // Оно заходит в чашу, не создавая зелёной плоскости перед диском.
+    let neck_start = top - Vec3::Z * (height * 0.085);
+    let neck_end = cup_point(0.0, -0.31, 0.0) + flower_forward * (flower_radius * 0.045);
+    let neck_axis = (neck_end - neck_start).normalize();
+    let side_raw = neck_axis.cross(Vec3::Z);
+    let neck_side = if side_raw.length_squared() < 0.001 {
+        Vec3::X
+    } else {
+        side_raw.normalize()
+    };
+    let neck_up = neck_axis.cross(neck_side).normalize();
+    let neck_sides = 12usize;
+    let neck_radius = stem_half_width * 0.95;
+    for i in 0..neck_sides {
+        let a0 = std::f32::consts::TAU * i as f32 / neck_sides as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / neck_sides as f32;
+        let r0 = neck_side * a0.cos() + neck_up * a0.sin();
+        let r1 = neck_side * a1.cos() + neck_up * a1.sin();
+        green_faces.push(Polygon::quad(
+            neck_start + r0 * neck_radius,
+            neck_start + r1 * neck_radius,
+            neck_end + r1 * neck_radius * 1.15,
+            neck_end + r0 * neck_radius * 1.15,
+        ));
+    }
+
+    // Семечки: небольшие вытянутые ромбики, уложенные по спирали
+    // на передней поверхности диска. Два оттенка создают фактуру.
+    let mut seed_dark_faces: Vec<Polygon> = Vec::new();
+    let mut seed_light_faces: Vec<Polygon> = Vec::new();
+    let seed_count = 210usize;
+    let golden_angle = 2.3999632_f32;
+    let seed_length = disk_radius * 0.105;
+    let seed_width = disk_radius * 0.045;
+    let seed_surface = disk_center + flower_forward * 0.0025;
+
+    for i in 0..seed_count {
+        let r = disk_radius * 0.92 * ((i as f32 + 0.5) / seed_count as f32).sqrt();
+        let a = i as f32 * golden_angle;
+        let center = seed_surface
+            + flower_right * (a.cos() * r)
+            + flower_up * (a.sin() * r);
+        // Семечки направлены по касательной к концентрическим окружностям.
+        let long_axis = flower_right * -a.sin() + flower_up * a.cos();
+        let short_axis = flower_right * a.cos() + flower_up * a.sin();
+        let length = seed_length * rng.random_range(0.78..1.10);
+        let width = seed_width * rng.random_range(0.80..1.10);
+        let p0 = center + long_axis * length * 0.5;
+        let p1 = center + short_axis * width * 0.5;
+        let p2 = center - long_axis * length * 0.5;
+        let p3 = center - short_axis * width * 0.5;
+        let target = if i % 5 == 0 {
+            &mut seed_light_faces
+        } else {
+            &mut seed_dark_faces
+        };
+        target.push(Polygon::quad(p0, p1, p2, p3).oriented(flower_forward));
+    }
+
+    // Широкие лепестки с мягко закруглённым кончиком и лёгким изгибом назад.
+    // Треугольники сохраняем также для точного облака точек.
+    let mut petal_triangles: Vec<[Vec3; 3]> = Vec::new();
     for i in 0..petals {
-        let angle =
-            std::f32::consts::TAU * i as f32 / petals as f32;
-
-        let radial =
-            flower_right * angle.cos()
-            + flower_up * angle.sin();
-
-        let tangent =
-            flower_right * -angle.sin()
-            + flower_up * angle.cos();
-
-        let petal_base =
-            flower_center + radial * (disk_radius * 0.82);
-
-        let petal_tip =
-            flower_center + radial * flower_radius;
-
-        let petal_half_width = flower_radius * 0.12;
-
-        let p0 = petal_base - tangent * petal_half_width;
-        let p1 = petal_base + tangent * petal_half_width;
-        let p2 = petal_tip;
-
-        yellow_faces.push(
-            Polygon::triangle(p0, p1, p2)
-                .oriented(flower_forward),
-        );
+        let angle = std::f32::consts::TAU * i as f32 / petals as f32;
+        let radial = flower_right * angle.cos() + flower_up * angle.sin();
+        let tangent = flower_right * -angle.sin() + flower_up * angle.cos();
+        let root_radius = disk_radius * 0.76;
+        let outer_length = flower_radius - root_radius;
+        // Широкая середина и закруглённый (не игольчатый) конец.
+        let sections: [(f32, f32); 6] = [
+            (0.00, 0.50), (0.18, 0.82), (0.42, 1.00),
+            (0.72, 0.91), (0.92, 0.52), (1.00, 0.08),
+        ];
+        let width = flower_radius * 0.105;
+        let mut previous: Option<(Vec3, Vec3)> = None;
+        for (t, width_scale) in sections {
+            let center = petal_center
+                + radial * (root_radius + outer_length * t)
+                - flower_forward * (flower_radius * 0.11 * t * t);
+            let left = center - tangent * (width * width_scale);
+            let right = center + tangent * (width * width_scale);
+            if let Some((old_left, old_right)) = previous {
+                // Два треугольника на сегмент для плавной формы.
+                for [p0, p1, p2] in [
+                    [old_left, old_right, right],
+                    [old_left, right, left],
+                ] {
+                    yellow_faces.push(Polygon::triangle(p0, p1, p2).oriented(flower_forward));
+                    petal_triangles.push([p0, p1, p2]);
+                }
+            }
+            previous = Some((left, right));
+        }
     }
 
-    // Облако точек подсолнуха повторяет форму растения:
-    // стебель, крупные листья и цветочную корзинку.
-    let pts = g.tuft_cloud_points.clamp(16, 128);
+    // Облако точек подсолнуха: точки на стебле, листьях и цветочной корзинке.
+    // Для одиночного подсолнуха нужна более плотная выборка, чем для пучка травы.
+    // Настройка пресета остаётся верхним управляющим параметром в диапазоне 1536..4096.
+    let pts = g.tuft_cloud_points.clamp(1536, 4096);
     let mut cloud: Vec<Vec3> = Vec::with_capacity(pts);
 
-    // Примерно треть точек — вдоль стебля.
+    // Стебель.
     let stem_points = pts / 4;
-
     for _ in 0..stem_points {
-        let t: f32 = rng.random_range(0.0..1.0);
+        let t = rng.random_range(0.0..1.0);
         let center = base + (top - base) * t;
-
         let angle = rng.random_range(0.0..std::f32::consts::TAU);
         let dist = rng.random_range(0.0..stem_half_width);
+        cloud.push(center + Vec3::new(angle.cos() * dist, angle.sin() * dist, 0.0));
+    }
 
+    // Листья: сохраняем прежнее распределение, но выделяем больше точек.
+    let leaf_points = pts * 3 / 10;
+    for _ in 0..leaf_points {
+        let leaf_index = rng.random_range(0..sunflower_leaves.len());
+        let (center, side, across, leaf_length, leaf_max_half_width) =
+            sunflower_leaves[leaf_index];
+        let along = rng.random_range(0.05..1.0);
+        let width_factor = (std::f32::consts::PI * along).sin();
+        let leaf_half_width = leaf_max_half_width * width_factor;
+        let sideways = rng.random_range(-leaf_half_width..leaf_half_width);
         cloud.push(
-            center
-                + Vec3::new(
-                    angle.cos() * dist,
-                    angle.sin() * dist,
-                    0.0,
-                ),
+            center + side * (leaf_length * along) + across * sideways
+                - Vec3::Z * (leaf_length * 0.05 * along),
         );
     }
 
-    // Примерно треть точек — по крупным листьям.
-    let leaf_points = pts / 3;
-
-    for _ in 0..leaf_points {
-        let leaf_index = rng.random_range(0..sunflower_leaves.len());
-
-    let (center, side, across, leaf_length, leaf_max_half_width) =
-        sunflower_leaves[leaf_index];
-            let along = rng.random_range(0.05..1.0);
-            let width_factor = (std::f32::consts::PI * along).sin();
-
-            let leaf_half_width = leaf_max_half_width * width_factor;
-            let sideways = rng.random_range(-leaf_half_width..leaf_half_width);
-
-            cloud.push(
-                center
-                    + side * (leaf_length * along)
-                    + across * sideways
-                    - Vec3::Z * (leaf_length * 0.05 * along),
-            );
-        }
-
-    // Оставшиеся точки — по всей площади цветочной корзинки.
-    while cloud.len() < pts {
+    // Диск: равномерные точки по кругу в плоскости его видимой поверхности.
+    let disk_points = pts / 4;
+    for _ in 0..disk_points {
         let angle = rng.random_range(0.0..std::f32::consts::TAU);
-        let radius =
-            rng.random_range(0.0f32..1.0).sqrt() * flower_radius;
-
+        let radius = rng.random_range(0.0f32..1.0).sqrt() * disk_radius;
         cloud.push(
-            flower_center
-                + flower_right * (angle.cos() * radius)
+            disk_center + flower_right * (angle.cos() * radius)
                 + flower_up * (angle.sin() * radius),
         );
+    }
+
+    // Точки выбираются непосредственно на новых изогнутых лепестках.
+    while cloud.len() < pts {
+        let [p0, p1, p2] = petal_triangles[rng.random_range(0..petal_triangles.len())];
+        let u = rng.random_range(0.0f32..1.0).sqrt();
+        let v = rng.random_range(0.0f32..1.0);
+        cloud.push(p0 * (1.0 - u) + p1 * (u * (1.0 - v)) + p2 * (u * v));
     }
 
     let part = Part::new(
@@ -567,9 +654,30 @@ fn generate_sunflower_tuft(config: &PlantConfig, seed: Seed) -> GrassTuft {
         cloud,
     )
     .child(Part::new(
+        "зелёное цветоложе",
+        Color::srgb(0.19, 0.32, 0.09),
+        receptacle_faces,
+        true,
+        Vec::new(),
+    ))
+    .child(Part::new(
         "сердцевина",
         Color::srgb(0.22, 0.12, 0.05),
         brown_faces,
+        true,
+        Vec::new(),
+    ))
+    .child(Part::new(
+        "тёмные семечки",
+        Color::srgb(0.105, 0.065, 0.035),
+        seed_dark_faces,
+        true,
+        Vec::new(),
+    ))
+    .child(Part::new(
+        "светлые семечки",
+        Color::srgb(0.35, 0.235, 0.115),
+        seed_light_faces,
         true,
         Vec::new(),
     ))
