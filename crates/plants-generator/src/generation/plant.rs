@@ -23,7 +23,7 @@ use super::foliage::{
     build_foliage,
 };
 use super::part::Part;
-use super::skeleton::PlantSkeleton;
+use super::skeleton::{PlantSkeleton, is_terminal};
 
 /// Сгенерированное дерево/куст.
 #[derive(Debug, Clone)]
@@ -78,6 +78,11 @@ impl Plant {
             }
             let axis = offset / height;
             let end = skeleton.points[segment.to];
+
+            let is_cactus_tip =
+                config.preset == PlantPreset::CactusLarge
+                && is_terminal(&skeleton, segment);
+
             let end_branch = config
                 .branches
                 .get(end.level)
@@ -95,24 +100,40 @@ impl Plant {
             let sides = end_branch.map(|b| b.mesh_sides.max(3)).unwrap_or(6);
 
             let (_, faces, cloud) = &mut by_color[bucket];
+            if config.preset == PlantPreset::CactusLarge {
+                // Smooth only unbranched joints. At forks each arm retains its own axis.
+                let incoming = skeleton.segments.iter()
+                    .find(|other| other.to == segment.from)
+                    .map(|other| (p0 - skeleton.points[other.from].position).normalize_or_zero());
+                let outgoing: Vec<Vec3> = skeleton.segments.iter()
+                    .filter(|other| other.from == segment.to)
+                    .map(|other| (skeleton.points[other.to].position - p1).normalize_or_zero())
+                    .collect();
+                let from_count = skeleton.segments.iter()
+                    .filter(|other| other.from == segment.from).count();
+                let start_axis = if from_count == 1 {
+                    incoming.map(|prev| (prev + axis).normalize_or_zero())
+                        .filter(|dir| dir.length_squared() > 1e-6)
+                        .unwrap_or(axis)
+                } else { axis };
+                let end_axis = if outgoing.len() == 1 {
+                    (axis + outgoing[0]).normalize_or_zero()
+                } else { axis };
+                let end_axis = if end_axis.length_squared() > 1e-6 { end_axis } else { axis };
+                let (polygons, points) = cactus_curved_geometry(
+                    p0, p1, r0, r1, sides, start_axis, end_axis,
+                    is_cactus_tip, config.point_step,
+                );
+                faces.extend(polygons);
+                cloud.extend(points);
+                continue;
+            }
             let midpoint = p0 + offset * 0.5;
             let polygons = if config.preset == PlantPreset::CactusSmall {
                 cactus_small_polygons(
                     r0,
                     r1,
                     height,
-                    sides,
-                    axis,
-                )
-            } else if config.preset == PlantPreset::CactusLarge {
-                // Небольшое перекрытие соседних сегментов закрывает щели
-                // в местах изгиба рук кактуса.
-                let joint_overlap = (r0.min(r1) * 0.65).min(0.16);
-
-                cactus_side_polygons(
-                    r0,
-                    r1,
-                    height + joint_overlap * 2.0,
                     sides,
                     axis,
                 )
@@ -139,24 +160,24 @@ impl Plant {
                 faces.push(translate_polygon(&poly, midpoint));
             }
                         if config.preset == PlantPreset::CactusSmall {
-                cloud.extend(cactus_small_cloud(
-                    r0,
-                    r1,
-                    height,
-                    axis,
-                    p0,
-                    config.point_step,
-                ));
-            } else {
-                cloud.extend(branch_cone_cloud(
-                    r0,
-                    r1,
-                    height,
-                    axis,
-                    p0,
-                    config.point_step,
-                ));
-            }
+                    cloud.extend(cactus_small_cloud(
+                        r0,
+                        r1,
+                        height,
+                        axis,
+                        p0,
+                        config.point_step,
+                    ));
+                } else {
+                    cloud.extend(branch_cone_cloud(
+                        r0,
+                        r1,
+                        height,
+                        axis,
+                        p0,
+                        config.point_step,
+                    ));
+                }
         }
         // Шум на облако веток — сетка не должна «светиться» правильной решёткой.
         // Применяется к каждой группе отдельно (шум позиционный и детерминированный,
@@ -520,83 +541,112 @@ fn cactus_small_polygons(
     polys
 }
 
-/// Ребристая поверхность кактуса:
-/// радиус чередуется между выступами и впадинами,
-/// образуя продольные рёбра.
-fn cactus_side_polygons(
-    r0: f32,
-    r1: f32,
-    height: f32,
-    sides: usize,
-    axis: Vec3,
-) -> Vec<Polygon> {
-    let (u, v) = basis(axis);
-    let z0 = -height * 0.5;
-    let z1 = height * 0.5;
+/// Curved saguaro tube: the mesh and point cloud use the same centerline and rings.
+fn cactus_curved_geometry(
+    p0: Vec3, p1: Vec3, r0: f32, r1: f32, sides: usize,
+    start_axis: Vec3, end_axis: Vec3, is_tip: bool, step: f32,
+) -> (Vec<Polygon>, Vec<Vec3>) {
+    let delta = p1 - p0;
+    let length = delta.length();
+    let axis = delta / length;
+    let cap_height = if is_tip { r1.min(length * 0.22) } else { 0.0 };
+    let body_fraction = 1.0 - cap_height / length;
+    let rings = ((length / 0.12).ceil() as usize).max(12);
+    let vertex_count = sides.max(6) * 2;
+    let mut faces = Vec::new();
+    let mut cloud = Vec::new();
+    let (reference_u, _) = basis(axis);
 
-    // Для каждого ребра используем две точки:
-    // выступ и впадину между соседними рёбрами.
-    let rib_count = sides.max(6);
-    let vertex_count = rib_count * 2;
-    let step = std::f32::consts::TAU / vertex_count as f32;
-
-    let mut polys = Vec::with_capacity(vertex_count * 3);
-
-    // Боковая поверхность.
-    for i in 0..vertex_count {
-        let next = (i + 1) % vertex_count;
-
-        let a0 = step * i as f32;
-        let a1 = step * next as f32;
-
-        let c0 = u * a0.cos() + v * a0.sin();
-        let c1 = u * a1.cos() + v * a1.sin();
-
-        // Чётные точки — вершины рёбер,
-        // нечётные — неглубокие впадины.
-        let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
-        let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
-
-        let b0 = c0 * (r0 * relief0) + axis * z0;
-        let b1 = c1 * (r0 * relief1) + axis * z0;
-        let t0 = c0 * (r1 * relief0) + axis * z1;
-        let t1 = c1 * (r1 * relief1) + axis * z1;
-
-        let mid = (c0 * relief0 + c1 * relief1) * 0.5;
-
-        polys.push(
-            Polygon::quad(b0, b1, t1, t0)
-                .oriented(mid),
-        );
-    }
-
-    // Крышки сегмента.
-    for (z, r, pref) in [(z0, r0, -axis), (z1, r1, axis)] {
-        if r <= 1e-4 {
-            continue;
-        }
-
-        let center = axis * z;
-
+    let frame = |t: f32| -> (Vec3, Vec3, Vec3, Vec3) {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let center = p0 * (2.0*t3 - 3.0*t2 + 1.0)
+            + start_axis * (length * (t3 - 2.0*t2 + t))
+            + p1 * (-2.0*t3 + 3.0*t2)
+            + end_axis * (length * (t3 - t2));
+        let derivative = p0 * (6.0*t2 - 6.0*t)
+            + start_axis * (length * (3.0*t2 - 4.0*t + 1.0))
+            + p1 * (-6.0*t2 + 6.0*t)
+            + end_axis * (length * (3.0*t2 - 2.0*t));
+        let tangent = derivative.normalize_or_zero();
+        let tangent = if tangent.length_squared() > 1e-6 { tangent } else { axis };
+        let u = (reference_u - tangent * reference_u.dot(tangent)).normalize_or_zero();
+        let u = if u.length_squared() > 1e-6 { u } else { basis(tangent).0 };
+        let v = tangent.cross(u).normalize();
+        (center, tangent, u, v)
+    };
+    let ring_vertex = |t: f32, i: usize, radius: f32| -> Vec3 {
+        let (center, _, u, v) = frame(t);
+        let angle = std::f32::consts::TAU * i as f32 / vertex_count as f32;
+        let relief = if i % 2 == 0 { 1.045 } else { 0.955 };
+        center + (u * angle.cos() + v * angle.sin()) * (radius * relief)
+    };
+    for ring in 0..rings {
+        let t0 = body_fraction * ring as f32 / rings as f32;
+        let t1 = body_fraction * (ring + 1) as f32 / rings as f32;
+        let r_start = r0 + (r1 - r0) * (t0 / body_fraction);
+        let r_end = r0 + (r1 - r0) * (t1 / body_fraction);
         for i in 0..vertex_count {
-            let next = (i + 1) % vertex_count;
-
-            let a0 = step * i as f32;
-            let a1 = step * next as f32;
-
-            let relief0 = if i % 2 == 0 { 1.045 } else { 0.955 };
-            let relief1 = if next % 2 == 0 { 1.045 } else { 0.955 };
-
-            let p0 =
-                center + (u * a0.cos() + v * a0.sin()) * (r * relief0);
-            let p1 =
-                center + (u * a1.cos() + v * a1.sin()) * (r * relief1);
-
-            polys.push(Polygon::triangle(center, p0, p1).oriented(pref));
+            let j = (i + 1) % vertex_count;
+            let a = ring_vertex(t0, i, r_start);
+            let b = ring_vertex(t0, j, r_start);
+            let c = ring_vertex(t1, j, r_end);
+            let d = ring_vertex(t1, i, r_end);
+            let center = frame((t0+t1)*0.5).0;
+            let outward = ((a+b+c+d)*0.25-center).normalize_or_zero();
+            faces.push(Polygon::quad(a,b,c,d).oriented(outward));
         }
     }
-
-    polys
+    if is_tip {
+        let cap_rings = 6;
+        let (base, tangent, u, v) = frame(body_fraction);
+        for ring in 0..cap_rings {
+            let a0 = std::f32::consts::FRAC_PI_2 * ring as f32 / cap_rings as f32;
+            let a1 = std::f32::consts::FRAC_PI_2 * (ring+1) as f32 / cap_rings as f32;
+            for i in 0..vertex_count {
+                let j = (i+1)%vertex_count;
+                let point = |a: f32, k: usize| {
+                    let theta = std::f32::consts::TAU * k as f32 / vertex_count as f32;
+                    let relief = if k%2==0 {1.045} else {0.955};
+                    base + tangent * (cap_height * a.sin())
+                        + (u*theta.cos()+v*theta.sin()) * (r1*a.cos()*relief)
+                };
+                let a=point(a0,i); let b=point(a0,j);
+                let c=point(a1,j); let d=point(a1,i);
+                let outward = ((a+b+c+d)*0.25 - (base+tangent*cap_height*0.5)).normalize_or_zero();
+                faces.push(Polygon::quad(a,b,c,d).oriented(outward));
+            }
+        }
+    }
+    // Cloud points follow the same curved tube rather than straight skeleton edges.
+    if step > 1e-4 {
+        let samples = ((length / step).ceil() as usize).max(1);
+        for k in 0..=samples {
+            let t = body_fraction * k as f32 / samples as f32;
+            let radius = r0 + (r1-r0) * (t/body_fraction);
+            let count = ((std::f32::consts::TAU * radius / step).round() as usize).max(2);
+            let (center, _, u, v) = frame(t);
+            for i in 0..count {
+                let angle = std::f32::consts::TAU * i as f32 / count as f32;
+                cloud.push(center + (u*angle.cos()+v*angle.sin())*radius);
+            }
+        }
+        if is_tip {
+            let (base,tangent,u,v) = frame(body_fraction);
+            let cap_samples = ((cap_height/step).ceil() as usize).max(5);
+            for k in 1..=cap_samples {
+                let angle = std::f32::consts::FRAC_PI_2 * k as f32 / cap_samples as f32;
+                let radius = r1 * angle.cos();
+                let center = base + tangent * (cap_height * angle.sin());
+                let count = ((std::f32::consts::TAU * radius / step).round() as usize).max(2);
+                for i in 0..count {
+                    let theta = std::f32::consts::TAU * i as f32 / count as f32;
+                    cloud.push(center + (u*theta.cos()+v*theta.sin())*radius);
+                }
+            }
+        }
+    }
+    (faces,cloud)
 }
 
 /// Неровный древесный ствол юкки.
@@ -850,3 +900,4 @@ fn basis(axis: Vec3) -> (Vec3, Vec3) {
     let v = axis.cross(u).normalize();
     (u, v)
 }
+

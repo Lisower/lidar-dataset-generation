@@ -1411,7 +1411,21 @@ fn grow(
     // - иначе (пресеты нового движка) — окно из `children_max` веток
     //   перемешивается и берутся случайные `children`, так у тройки шаблонов
     //   «продолжить/−поворот/+поворот» достижимы все три и азимут не дрейфует.
-    let indices: Vec<usize> = if branch.consecutive_children {
+    let indices: Vec<usize> = if config.preset == PlantPreset::CactusLarge
+        && branch.level == 1
+    {
+        // Сохраняем центральный ствол (первый кандидат), а боковые
+        // руки выбираем случайно без повторений из оставшихся кандидатов.
+        let mut indices = vec![from];
+        let mut arms: Vec<usize> = (from + 1..window_end).collect();
+        for i in (1..arms.len()).rev() {
+            let j = rng.random_range(0..=i);
+            arms.swap(i, j);
+        }
+        arms.truncate(children.saturating_sub(1));
+        indices.extend(arms);
+        indices
+    } else if branch.consecutive_children {
         let count = children.min(next_level.len().saturating_sub(from));
         (from..from + count).collect()
     } else {

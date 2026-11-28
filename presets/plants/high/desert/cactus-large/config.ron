@@ -48,7 +48,7 @@
                 vertical_max: 1.0,
                 horizontal_min: -3.0,
                 horizontal_max: 3.0,
-                children_min: 5,
+                children_min: 3,
                 children_max: 5,
                 first_child_index: 0,
                 consecutive_children: true,
