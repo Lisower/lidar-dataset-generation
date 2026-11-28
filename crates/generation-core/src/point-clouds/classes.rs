@@ -63,7 +63,7 @@ impl PointClass {
             Self::Building => 3.5,
             Self::Vegetation => 3.0,
             Self::Water => 3.5,
-            Self::LowNoise => 10.0,
+            Self::LowNoise => 9.0,
             Self::Other => 3.5,
         }
     }
@@ -107,18 +107,27 @@ mod tests {
         }
     }
 
+    /// Базовые классы намеренно рисуются точками одного размера, поэтому
+    /// различать их на экране должен именно цвет.
     #[test]
-    fn different_classes_have_different_sizes() {
-        let sizes = [
-            PointClass::Ground.point_size(),
-            PointClass::Building.point_size(),
-            PointClass::Vegetation.point_size(),
-            PointClass::Water.point_size(),
-            PointClass::LowNoise.point_size(),
+    fn every_class_has_a_distinct_color() {
+        let classes = [
+            PointClass::Ground,
+            PointClass::Building,
+            PointClass::Vegetation,
+            PointClass::Water,
+            PointClass::LowNoise,
+            PointClass::Other,
         ];
-        for i in 0..sizes.len() {
-            for j in (i + 1)..sizes.len() {
-                assert_ne!(sizes[i], sizes[j], "размеры классов должны различаться");
+        for i in 0..classes.len() {
+            for j in (i + 1)..classes.len() {
+                assert_ne!(
+                    classes[i].color().to_srgba(),
+                    classes[j].color().to_srgba(),
+                    "цвета классов {:?} и {:?} должны различаться",
+                    classes[i],
+                    classes[j]
+                );
             }
         }
     }

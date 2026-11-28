@@ -13,7 +13,7 @@ use generation_core::{UiModalOpen, general::RegenerationRequest, presets::Preset
 use rand::RngExt;
 use std::{
     io::{BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 #[derive(Clone, Debug)]
@@ -342,15 +342,6 @@ pub fn run_headless(options: DemoOptions) -> Result<(), Box<dyn std::error::Erro
 
 pub fn run(options: DemoOptions) -> Result<(), Box<dyn std::error::Error>> {
     validate_options(&options)?;
-    // Ассеты ищем рядом с exe/в рабочем каталоге (переносимая сборка), а путь
-    // сборочной машины оставляем запасным для `cargo run`.
-    let assets_root = generation_core::presets::resolve_dir(
-        "assets",
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("buildings-generator")
-            .join("assets"),
-    );
     let selector = preset_selector();
     let mut store = PresetStore::discover_all(&selector.presets_root);
     store.load_selection(&selector.settings_dir);

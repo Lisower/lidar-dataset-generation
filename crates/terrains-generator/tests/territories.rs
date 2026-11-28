@@ -71,7 +71,7 @@ fn nested_groups_expand_stably_and_deduplicate() {
     ];
     let candidates = sources::resolve("plants", &refs, "", Some(&root())).unwrap();
     let ids: Vec<_> = candidates.iter().map(|c| c.source.id.as_str()).collect();
-    assert_eq!(ids.len(), 7);
+    assert_eq!(ids.len(), 9);
     assert_eq!(
         ids.iter().copied().collect::<BTreeSet<_>>().len(),
         ids.len()
